@@ -80,6 +80,8 @@
     )
 )]
 
+#[cfg(feature = "cbench")]
+pub mod cbench;
 pub mod builder;
 pub mod corpus;
 pub mod flat;
