@@ -92,6 +92,7 @@ pub mod query;
 pub mod scalar;
 pub mod scan;
 pub mod strict;
+pub mod tiers;
 pub mod unescape;
 pub mod workspace;
 

@@ -111,40 +111,61 @@ fn hex4(bytes: &[u8]) -> Option<u16> {
 /// Reproduce `json_extract_string` (`tier3/parse.vl:331-377`) byte for byte,
 /// lossy `\uXXXX` handling and all.
 ///
+/// Vela appends unescaped bytes with `input.slice(i, i + 1)`, which copies
+/// **one raw byte** — so multi-byte UTF-8 passes through unchanged. An
+/// earlier version of this function used `out.push(b as char)`, which
+/// reinterprets each byte as a code point and turns `é` (`C3 A9`) into
+/// `Ã©`. Building a byte vector avoids that and lets the literal runs be
+/// copied in bulk instead of one byte at a time.
+///
 /// Kept for differential testing; do not use it for anything real.
 #[must_use]
 pub fn unescape_vela_lossy(raw: &[u8]) -> String {
-    let mut out = String::with_capacity(raw.len());
+    let mut out: Vec<u8> = Vec::with_capacity(raw.len());
     let mut i = 0usize;
+
     while i < raw.len() {
-        let Some(&b) = raw.get(i) else { break };
-        if b != b'\\' {
-            out.push(b as char);
+        // Copy everything up to the next backslash in one go.
+        let start = i;
+        while raw.get(i).is_some_and(|&c| c != b'\\') {
             i += 1;
-            continue;
         }
-        i += 1;
+        if i > start {
+            out.extend_from_slice(raw.get(start..i).unwrap_or_default());
+        }
+        if i >= raw.len() {
+            break;
+        }
+
+        i += 1; // the backslash
         let Some(&esc) = raw.get(i) else { break };
         i += 1;
         match esc {
-            b'"' => out.push('"'),
-            b'\\' => out.push('\\'),
-            b'/' => out.push('/'),
-            b'n' => out.push('\n'),
-            b'r' => out.push('\r'),
-            b't' => out.push('\t'),
+            b'"' => out.push(b'"'),
+            b'\\' => out.push(b'\\'),
+            b'/' => out.push(b'/'),
+            b'n' => out.push(b'\n'),
+            b'r' => out.push(b'\r'),
+            b't' => out.push(b'\t'),
             // Vela decodes both of these to a space.
-            b'b' | b'f' => out.push(' '),
+            b'b' | b'f' => out.push(b' '),
             // Vela emits a literal '?' and skips the four hex digits.
             b'u' => {
-                out.push('?');
+                out.push(b'?');
                 i += 4;
             }
             // Unknown escapes append nothing.
             _ => {}
         }
     }
-    out
+
+    // `from_utf8` takes ownership, so the valid case (effectively always,
+    // since the bytes came from a JSON string) costs no copy.
+    // `from_utf8_lossy(&out).into_owned()` would copy every time.
+    match String::from_utf8(out) {
+        Ok(s) => s,
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -187,5 +208,17 @@ mod tests {
         assert_eq!(unescape_vela_lossy(br"\b\f"), "  ");
         assert_eq!(unescape_vela_lossy(br"\u0041"), "?");
         assert_eq!(unescape_vela_lossy(br"\q"), "");
+        assert_eq!(unescape_vela_lossy(br"a\nb\tc"), "a\nb\tc");
+    }
+
+    /// Vela copies raw bytes, so multi-byte UTF-8 must survive intact.
+    #[test]
+    fn vela_lossy_preserves_utf8() {
+        assert_eq!(unescape_vela_lossy("é".as_bytes()), "é");
+        assert_eq!(unescape_vela_lossy("中文".as_bytes()), "中文");
+        assert_eq!(unescape_vela_lossy("😀".as_bytes()), "😀");
+        assert_eq!(unescape_vela_lossy("a😀b".as_bytes()), "a😀b");
+        // Mixed with escapes.
+        assert_eq!(unescape_vela_lossy(r"é\né".as_bytes()), "é\né");
     }
 }
