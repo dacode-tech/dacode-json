@@ -76,6 +76,12 @@ pub const HI_TABLE: [u8; 16] = [
 /// scalar scanner uses when [`super::Scanner::ScalarTable`] is selected.
 pub const CLASS_TABLE: [u8; 256] = build_class_table();
 
+// Indexing is deliberate here. This is a `const fn` evaluated at compile
+// time, so an out-of-bounds index is a *compile error*, not a runtime panic
+// — a strictly stronger guarantee than `get` would give, and one that costs
+// nothing. `b < 256`, `b & 0xF < 16` and `b >> 4 < 16` all hold by
+// construction.
+#[allow(clippy::indexing_slicing)]
 const fn build_class_table() -> [u8; 256] {
     let mut t = [0u8; 256];
     let mut b = 0usize;

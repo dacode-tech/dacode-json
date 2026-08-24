@@ -17,7 +17,23 @@ use std::borrow::Cow;
 /// escape. Borrows when there is no backslash to process.
 #[must_use]
 pub fn unescape(raw: &[u8]) -> Option<Cow<'_, str>> {
-    if !raw.contains(&b'\\') {
+    // One pass answers both questions. The obvious spelling —
+    // `raw.contains(&b'\\')` then `str::from_utf8(raw)` — walks the string
+    // twice, and this runs once per string field during deserialization.
+    let mut backslash = 0u8;
+    let mut high = 0u8;
+    for &b in raw {
+        backslash |= u8::from(b == b'\\');
+        high |= b;
+    }
+
+    if backslash == 0 {
+        if high & 0x80 == 0 {
+            // SAFETY: every byte is < 0x80, and all-ASCII is by definition
+            // valid UTF-8. The check above is exhaustive over `raw`, so this
+            // needs no invariant from anywhere else in the crate.
+            return Some(Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(raw) }));
+        }
         return std::str::from_utf8(raw).ok().map(Cow::Borrowed);
     }
 

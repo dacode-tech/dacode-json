@@ -82,6 +82,10 @@
 
 pub mod builder;
 pub mod corpus;
+#[cfg(feature = "serde")]
+pub mod de;
+#[cfg(feature = "serde")]
+pub mod ser;
 pub mod pool;
 pub mod query;
 pub mod scalar;
