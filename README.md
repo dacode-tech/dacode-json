@@ -195,7 +195,9 @@ src/
   strict.rs      RFC 8259 parser over the same pool
   de.rs          serde::Deserializer over the pool
   ser.rs         serde::Serializer with a vectorised escaper
-  flat.rs        jsonflat: zero-copy wire format (the YaFF question)
+  flat/
+    mod.rs       jsonflat: dynamic zero-copy wire format
+    typed.rs     jsonflat: schema-driven layout (0.67x vs dynamic 1.48x)
   corpus.rs      deterministic test/bench data
   bin/profile.rs profiling workloads
 tests/
@@ -207,6 +209,7 @@ tests/
   serde_de.rs              deserializer vs serde_json
   serde_ser.rs             serializer, byte-identical to serde_json
   flat.rs                  roundtrip + 40k hostile buffers
+  flat_typed.rs            schema layout, layout/schema confusion, fuzz
 benches/
   tiers.rs  scan.rs  parse.rs  query.rs  structs.rs  zerocopy.rs
 examples/

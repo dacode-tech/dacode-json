@@ -23,7 +23,9 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use rkyv::{rancor::Error as RkyvError, Archive, Deserialize as RkyvDe, Serialize as RkyvSer};
 use serde::{Deserialize, Serialize};
 use std::hint::black_box;
+use vela_json::flat::typed::{TypedView, TypedWriter};
 use vela_json::flat::{self, View};
+use vela_json::flat_struct;
 use vela_json::strict::StrictParser;
 use vela_json::{corpus, Workspace};
 
@@ -38,6 +40,35 @@ struct Record {
     city: String,
     score: i64,
     tags: Vec<String>,
+}
+
+flat_struct! {
+    /// Schema-driven layout of the records corpus: no key strings stored.
+    pub struct FlatRecord : FlatRecordFields {
+        id: u64,
+        age: u32,
+        active: bool,
+        score: i64,
+        name: str,
+        city: str,
+        tags: [str],
+    }
+}
+
+/// Build the typed buffer from already-parsed records.
+fn encode_typed(records: &[Record]) -> Vec<u8> {
+    let mut w = TypedWriter::<FlatRecord>::new();
+    for r in records {
+        w.record()
+            .u64(r.id)
+            .u32(r.age)
+            .bool(r.active)
+            .i64(r.score)
+            .str(&r.name)
+            .str(&r.city)
+            .str_list(r.tags.iter().map(String::as_str));
+    }
+    w.finish()
 }
 
 fn corpus_json() -> String {
@@ -61,14 +92,19 @@ fn expected_sum(records: &[Record]) -> i64 {
     records.iter().map(|r| r.score).sum()
 }
 
-fn report_sizes(json: &str, flatbuf: &[u8], rkyvbuf: &[u8]) {
+fn report_sizes(json: &str, flatbuf: &[u8], typedbuf: &[u8], rkyvbuf: &[u8]) {
     println!("\n  --- buffer sizes (1 MiB corpus) ---");
     let j = json.len() as f64;
     println!("  json           {:>10} bytes  1.00x", json.len());
     println!(
-        "  jsonflat       {:>10} bytes  {:.2}x",
+        "  jsonflat dyn   {:>10} bytes  {:.2}x",
         flatbuf.len(),
         flatbuf.len() as f64 / j
+    );
+    println!(
+        "  jsonflat typed {:>10} bytes  {:.2}x",
+        typedbuf.len(),
+        typedbuf.len() as f64 / j
     );
     println!(
         "  rkyv           {:>10} bytes  {:.2}x",
@@ -95,7 +131,8 @@ fn bench_open(c: &mut Criterion) {
     let records: Vec<Record> = serde_json::from_str(&json).expect("parse");
     let flatbuf = encode_flat(&json);
     let rkyvbuf = encode_rkyv(&records);
-    report_sizes(&json, &flatbuf, &rkyvbuf);
+    let typedbuf = encode_typed(&records);
+    report_sizes(&json, &flatbuf, &typedbuf, &rkyvbuf);
 
     let mut group = c.benchmark_group("zc_open");
     group.throughput(Throughput::Bytes(json.len() as u64));
@@ -111,6 +148,13 @@ fn bench_open(c: &mut Criterion) {
         b.iter(|| {
             let v = View::new(black_box(&flatbuf)).expect("view");
             v.validate_deep().expect("valid");
+            black_box(v.len())
+        });
+    });
+
+    group.bench_function("jsonflat_typed_header_only", |b| {
+        b.iter(|| {
+            let v = TypedView::<FlatRecord>::new(black_box(&typedbuf)).expect("view");
             black_box(v.len())
         });
     });
@@ -155,6 +199,7 @@ fn bench_read_one(c: &mut Criterion) {
     let json = corpus_json();
     let records: Vec<Record> = serde_json::from_str(&json).expect("parse");
     let flatbuf = encode_flat(&json);
+    let typedbuf = encode_typed(&records);
     let rkyvbuf = encode_rkyv(&records);
     let want = records.first().map(|r| r.score).unwrap_or(0);
 
@@ -168,6 +213,15 @@ fn bench_read_one(c: &mut Criterion) {
                 .at(0)
                 .and_then(|r| r.get("score"))
                 .and_then(|s| s.as_i64());
+            debug_assert_eq!(got, Some(want));
+            black_box(got)
+        });
+    });
+
+    group.bench_function("jsonflat_typed", |b| {
+        b.iter(|| {
+            let v = TypedView::<FlatRecord>::new(black_box(&typedbuf)).expect("view");
+            let got = v.score(0);
             debug_assert_eq!(got, Some(want));
             black_box(got)
         });
@@ -211,6 +265,7 @@ fn bench_read_all(c: &mut Criterion) {
     let json = corpus_json();
     let records: Vec<Record> = serde_json::from_str(&json).expect("parse");
     let flatbuf = encode_flat(&json);
+    let typedbuf = encode_typed(&records);
     let rkyvbuf = encode_rkyv(&records);
     let want = expected_sum(&records);
 
@@ -225,6 +280,15 @@ fn bench_read_all(c: &mut Criterion) {
                 .elements()
                 .filter_map(|r| r.get("score")?.as_i64())
                 .sum();
+            debug_assert_eq!(sum, want);
+            black_box(sum)
+        });
+    });
+
+    group.bench_function("jsonflat_typed", |b| {
+        b.iter(|| {
+            let v = TypedView::<FlatRecord>::new(black_box(&typedbuf)).expect("view");
+            let sum: i64 = (0..v.len()).filter_map(|i| v.score(i)).sum();
             debug_assert_eq!(sum, want);
             black_box(sum)
         });
@@ -369,6 +433,10 @@ fn bench_encode(c: &mut Criterion) {
     // The parse alone, so the build cost can be separated from it.
     group.bench_function("strict_parse_only", |b| {
         b.iter(|| black_box(p.parse(black_box(json.as_bytes())).expect("valid").pool().len()));
+    });
+
+    group.bench_function("jsonflat_typed_from_structs", |b| {
+        b.iter(|| black_box(encode_typed(black_box(&records)).len()));
     });
 
     group.bench_function("rkyv_from_structs", |b| {

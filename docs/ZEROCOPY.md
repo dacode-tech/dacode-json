@@ -171,19 +171,108 @@ Reading the table:
 
 ---
 
-## 3. Why `rkyv` wins, and what that costs
+## 3. Schema-driven layout — `flat::typed`
+
+The dynamic format stores every key string, because JSON is self-describing
+and a reader may not know what is coming. When both ends *do* know the type,
+that is pure overhead: a field's position becomes a compile-time constant,
+keys need not be stored, and a read is a load at a fixed offset.
+
+```rust
+flat_struct! {
+    pub struct Record : RecordFields {
+        id: u64, age: u32, active: bool, score: i64,
+        name: str, city: str, tags: [str],
+    }
+}
+
+let mut w = TypedWriter::<Record>::new();
+w.record().u64(1).u32(30).bool(true).i64(-5)
+         .str("alpha").str("london").str_list(["x", "y"]);
+let buf = w.finish();
+
+let v = TypedView::<Record>::new(&buf)?;   // O(1): header + schema hash
+assert_eq!(v.name(0), Some("alpha"));      // one multiply-add, borrowed
+```
+
+Layout: a 32-byte header, a schema hash, then fixed-stride records of
+8-byte slots, then an interned string blob. `record[i].field[f]` is at
+`48 + i*stride + f*8`.
+
+### It lands next to `rkyv`
+
+1 MiB `records` corpus:
+
+| | size | open | read 1 field | read all | encode |
+|---|---|---|---|---|---|
+| jsonflat **dynamic** | 1.48× | 1.89 ns | 13.6 ns | 111 µs | 6.75 ms¹ |
+| jsonflat **typed** | **0.67×** | 2.15 ns | **2.49 ns** | **6.52 µs** | **848 µs** |
+| `rkyv` | 0.59× | 0.58 ns | 1.02 ns | 4.89 µs | 395 µs |
+| `serde_json` (re-parse) | 1.00× | 7.09 ms | 7.06 ms | 7.43 ms | 1.30 ms |
+
+¹ Includes parsing the JSON first (2.47 ms of it); the typed figure encodes
+from already-parsed structs, as `rkyv`'s does.
+
+Against the dynamic layout: **2.2× smaller, 5.5× faster to read one field,
+17× faster to read all.** Against `rkyv`: 1.13× larger, 1.33× slower on
+`read_all`. That residual is the 8-byte slot granularity — a `bool` occupies
+eight bytes where `rkyv` packs it into one. Packing fields by size would
+close most of it and is the obvious next step.
+
+### Why this is a type and not a Cargo feature
+
+The natural-looking design is `#[cfg(feature = "schema")]`. It is a trap,
+for three reasons:
+
+* **Features are additive and global.** One crate anywhere in the graph
+  enabling the other mode silently switches every crate over. `rkyv` shipped
+  `size_16`/`size_32` as mutually exclusive features and had to move them to
+  generics in 0.8 because the combination was unbuildable
+  ([rkyv#67](https://github.com/rkyv/rkyv/issues/67)).
+* **The choice is per-message.** A schema for a hot RPC type and dynamic for
+  a config blob, in one binary, is ordinary.
+* **It is a wire hazard.** Two builds of one program would emit mutually
+  unreadable buffers with nothing to detect it.
+
+So the layout is selected by the type you construct, and the header carries
+`FLAG_TYPED` plus a schema hash. Both readers reject the wrong thing with a
+real error rather than misreading:
+
+```rust
+TypedView::<Record>::new(&dynamic_buf)  // Err(LayoutMismatch)
+View::new(&typed_buf)                   // Err(LayoutMismatch)
+TypedView::<Other>::new(&record_buf)    // Err(SchemaMismatch)
+```
+
+The schema hash covers field **names, types, order and count**, so renaming,
+retyping, reordering or adding a field all invalidate old buffers instead of
+silently shifting every value by one slot. `tests/flat_typed.rs` checks each
+of those, plus every-single-byte mutation and 20 000 randomly corrupted
+buffers for panic-freedom.
+
+A Cargo feature does have a job here — gating a `derive` macro and its
+`syn`/`quote` compile cost, as `serde` does. Today the accessors come from a
+`macro_rules!` macro, so the crate has no proc-macro dependency at all. The
+cost is that the extension trait needs an explicit name
+(`struct Record : RecordFields`), because `macro_rules!` cannot concatenate
+identifiers; a `derive` would pick it automatically.
+
+---
+
+## 4. Why `rkyv` still wins, and what that costs
 
 `rkyv` is 22× faster at reading and 2.2× smaller. It is not a better
 implementation of the same idea; it is a different idea:
 
-| | `rkyv` | `jsonflat` |
-|---|---|---|
-| schema | compile-time Rust type | none |
-| field access | fixed struct offset, resolved by the compiler | binary search over stored key strings |
-| keys in the buffer | **not stored at all** | stored (interned) |
-| type tags | none | 4 bits per node |
-| accepts unknown shapes | no | yes |
-| readable without the schema | no | yes |
+| | `rkyv` | `jsonflat` dynamic | `jsonflat` typed |
+|---|---|---|---|
+| schema | compile-time Rust type | none | `flat_struct!` |
+| field access | fixed struct offset | binary search over stored keys | fixed slot offset |
+| keys in the buffer | **not stored** | stored (interned) | **not stored** |
+| type tags | none | 4 bits per node | none |
+| accepts unknown shapes | no | yes | no |
+| readable without the schema | no | yes | no |
+| size, `records` | 0.59× | 1.48× | 0.67× |
 
 Both differences trace to the same root: **`rkyv` knows the shape, so it
 stores only the data.** `jsonflat` stores the shape too, because JSON is
@@ -201,7 +290,7 @@ same place. That is the obvious next step and is not implemented here.
 
 ---
 
-## 4. Is it worth doing for Vela?
+## 5. Is it worth doing for Vela?
 
 **Yes, and it is a small change.** Concretely:
 

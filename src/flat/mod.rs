@@ -64,6 +64,8 @@
 //! payload: u32   kind-dependent
 //! ```
 
+pub mod typed;
+
 use crate::query::{Doc, Value};
 use crate::tag::Type;
 
@@ -79,6 +81,13 @@ pub const NODE: usize = 8;
 /// Set when each object's children are sorted by key, enabling binary
 /// search in [`Ref::get`].
 pub const FLAG_SORTED_KEYS: u16 = 1 << 0;
+
+/// Set when the buffer uses the schema-driven layout of [`typed`].
+///
+/// The layout is chosen by which type wrote the buffer, not by a build
+/// flag, so the reader has to be told which one it is looking at. Without
+/// this bit a dynamic buffer read as typed would silently produce garbage.
+pub const FLAG_TYPED: u16 = 1 << 1;
 
 /// Largest representable child count or string length: `aux` is 28 bits.
 pub const MAX_AUX: u32 = (1 << 28) - 1;
@@ -132,6 +141,11 @@ pub enum Error {
     BadUtf8,
     /// Document exceeds a `u32` count or a 28-bit `aux`.
     TooLarge,
+    /// A dynamic buffer was opened as typed, or the reverse.
+    LayoutMismatch,
+    /// The buffer was written for a different schema. See
+    /// [`typed::FlatSchema::SCHEMA_ID`].
+    SchemaMismatch,
 }
 
 impl core::fmt::Display for Error {
@@ -145,6 +159,10 @@ impl core::fmt::Display for Error {
             Error::DanglingReference => write!(f, "dangling node reference"),
             Error::BadUtf8 => write!(f, "string is not valid UTF-8"),
             Error::TooLarge => write!(f, "document too large for the format"),
+            Error::LayoutMismatch => {
+                write!(f, "buffer layout does not match the reader (dynamic vs typed)")
+            }
+            Error::SchemaMismatch => write!(f, "buffer was written for a different schema"),
         }
     }
 }
@@ -464,6 +482,10 @@ impl<'a> View<'a> {
             return Err(Error::UnsupportedVersion(version));
         }
         let flags = rd_u16(buf, 6).ok_or(Error::TooShort)?;
+        if flags & FLAG_TYPED != 0 {
+            // Typed buffers have a different section layout entirely.
+            return Err(Error::LayoutMismatch);
+        }
         let node_count = rd_u32(buf, 8).ok_or(Error::TooShort)?;
         let root = rd_u32(buf, 12).ok_or(Error::TooShort)?;
         let nodes_off = rd_u32(buf, 16).ok_or(Error::TooShort)? as usize;
