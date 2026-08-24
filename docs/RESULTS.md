@@ -26,6 +26,7 @@ Companion documents:
 
 | | |
 |---|---|
+| `docs/TIERS.md` | all four Vela tiers head-to-head; which should be the default |
 | `docs/PROFILING.md` | where every parser spends its time, and how to reproduce |
 | `docs/ZEROCOPY.md` | the YaFF question: a zero-copy wire format for JSON |
 | `docs/UNWRAP_FREE.md` | panic-free design study |
@@ -487,7 +488,8 @@ say why.
 ## Reproducing
 
 ```bash
-cargo test                          # 129 tests
+cargo test                          # 173 tests
+cargo bench --bench tiers           # all four Vela tiers head-to-head
 cargo bench --bench scan            # Stage 1: classifiers, phases, scanners
 cargo bench --bench parse           # DOM parse vs serde_json / simd-json / sonic-rs
 cargo bench --bench query           # parse + access patterns

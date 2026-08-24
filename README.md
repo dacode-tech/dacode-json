@@ -1,10 +1,10 @@
 # vela-json
 
-A Rust port of **Vela stage2's tier-3 JSON parser**, built to answer one
+A Rust port of **all four of Vela stage2's JSON tiers**, built to answer one
 question: *is the Vela algorithm slow, or was velac's code generation slow?*
 
-Answer: **the algorithm is fine.** The same algorithm, ported without
-redesign, runs 2.3–3.7× faster under rustc/LLVM.
+Answer: **the algorithms are fine.** Ported without redesign, tier 3 runs
+2.3–3.7× faster under rustc/LLVM.
 
 | Stage | Vela ([`JSON_IMPROVEMENT_PLAN.md:52-73`][plan]) | Straight port | After profiling |
 |---|---|---|---|
@@ -18,6 +18,7 @@ pointing at.
 
 | document | what is in it |
 |---|---|
+| **[`docs/TIERS.md`](docs/TIERS.md)** | all four Vela tiers head-to-head; which should be the default |
 | **[`docs/RESULTS.md`](docs/RESULTS.md)** | all benchmarks, methodology, caveats, bugs found |
 | **[`docs/PROFILING.md`](docs/PROFILING.md)** | where every parser spends its time; how to reproduce |
 | **[`docs/ZEROCOPY.md`](docs/ZEROCOPY.md)** | a YaFF-style zero-copy wire format for JSON |
@@ -29,22 +30,46 @@ pointing at.
 
 ## What was ported
 
-Vela ships four JSON tiers. Tier 3 is the fastest end-to-end path — a
-yyjson-style flat 16-byte node pool fed by a simdjson-style structural index
-(Vela's own tier-2 Stage 1).
+**All four tiers**, behind one `JsonTier` trait — the common interface
+`P1_2_JSON_TIERS.md:109-141` specifies.
+
+| tier | algorithm | Vela LOC | Rust module |
+|---|---|---|---|
+| 0 | scalar detection only; containers stubbed | 289 | `tiers::tier0` |
+| 1 | recursive descent — **Vela's default** | 590 | `tiers::tier1` |
+| 2 | structural index + tape DOM | 1619 | `tiers::tier2` |
+| 3 | flat node pool | 2063 | `pool`/`builder`/`query`/`workspace` |
+
+Tier 3, in detail:
 
 | Vela source | Rust module |
 |---|---|
 | `tier2/structural.vl` | `scan::scalar` |
 | `tier2/structural_simd.vl` (S6, S6b) | `scan::branchless` |
 | `runtime/simd_json_branchless.ll` | `scan::branchless`, `scan::neon` |
+| — (specified, never built) | `scan::table` |
 | `tier3/parse_indexed.vl` — `__json_build_from_si` | `builder` |
 | `runtime/json_pool_write.ll` — `__json_parse_scalar_fast` | `scalar` |
 | `tier3/parse_indexed.vl` — `json_workspace_create/_ws` | `workspace` |
 | `tier3/parse.vl` — query API | `query` |
-| — (new) | `strict` |
+| — (new) | `strict`, `de`, `ser`, `flat` |
 
 Every function carries a `file:line` reference back to the Vela original.
+
+### Which tier should be the default?
+
+Tier 1 — the one Vela already defaults to, though not for the reason its
+docs give. It is the fastest tier for single-field access at **every**
+document size from 8 to 16 384 keys, and it allocates nothing.
+
+| one field, last key | tier 1 | tier 2 | tier 3 | serde_json |
+|---|---|---|---|---|
+| 64 keys | **1.13 µs** | 1.80 µs | 2.50 µs | 5.43 µs |
+| 16 384 keys | **251 µs** | 379 µs | 569 µs | 2.50 ms |
+
+The indexed tiers only win past **~16 lookups per document**, and only if
+the index is cached — which tier 2's API never does. Full analysis in
+[`docs/TIERS.md`](docs/TIERS.md).
 
 ## Two parsers
 
@@ -101,6 +126,17 @@ deviates on 25% of high-precision literals. Ours matches `str::parse`.
 O(n) emitter" but calls `json_escape_string` (`common.vl:52`), a per-byte
 string-concat loop, so string output is quadratic.
 
+**`json_validate` does not validate.** Tiers 1 and 3 accept `{`, `[1,2`,
+`txxx`, `[1,]` and every other truncated document, because the skip
+functions return end-of-input and `validate` only checks that position
+equals `len`. Agreement with a real parser: tier 0 36.4%, tier 1 79.1%,
+tier 2 86.6%, tier 3 79.1%.
+
+**Tier 2 throws its own index away.** `json_object_get`, `object_count`,
+`object_keys` and `array_count` each call `json_tape_build`, so tier 2 does
+strictly more work than tier 1 for the same result — 4.7× more at 64
+lookups. Caching the tape turns a 2.2× loss into a 2.1× win.
+
 ## Bugs in the Vela sources
 
 Found while porting. Details in [`docs/RESULTS.md` §6](docs/RESULTS.md).
@@ -116,6 +152,13 @@ Found while porting. Details in [`docs/RESULTS.md` §6](docs/RESULTS.md).
    children from `idx + 1` — works only by accident.
 4. `json_pool_object_get_float` is declared `i64`.
 5. `emit_v2.vl`'s quadratic escaping, above.
+6. `json_validate` accepting truncated input in all tiers.
+7. Tier 2's `json_array_get` (`tier2/parse.vl:417`) does not use the tape —
+   it is byte-for-byte tier 1's scan.
+8. Tier 2's SIMD is off by default (`structural_gate.vl:4`), so stock tier 2
+   benchmarks measure the scalar scanner.
+9. Tier 1's `json_skip_value` recursion is unbounded — stack exhaustion on
+   untrusted nested input.
 
 ## Panic freedom
 
@@ -129,6 +172,13 @@ every prefix of a valid document, and 40 000 corrupted `jsonflat` buffers
 
 ```
 src/
+  tiers/
+    mod.rs       the JsonTier contract shared by all four
+    common.rs    common.vl - skip/scan helpers
+    tier0.rs     scalar only
+    tier1.rs     recursive descent (Vela's default)
+    tier2/       structural index + tape DOM
+    tier3.rs     adapter over the pool implementation below
   tag.rs         node tag encoding (aux << 8 | type)
   pool.rs        the flat 16-byte node pool
   scan/
@@ -149,6 +199,7 @@ src/
   corpus.rs      deterministic test/bench data
   bin/profile.rs profiling workloads
 tests/
+  tier_contract.rs         all four tiers vs each other and serde_json
   scanner_equivalence.rs   Stage 1 oracle tests (port of t859 + fuzz)
   classifier.rs            all 256 bytes, all 9 scanners
   faithful_semantics.rs    quirks pinned + panic freedom
@@ -157,7 +208,7 @@ tests/
   serde_ser.rs             serializer, byte-identical to serde_json
   flat.rs                  roundtrip + 40k hostile buffers
 benches/
-  scan.rs  parse.rs  query.rs  structs.rs  zerocopy.rs
+  tiers.rs  scan.rs  parse.rs  query.rs  structs.rs  zerocopy.rs
 examples/
   typestate.rs   runnable unwrap-free demo
   sizes.rs       jsonflat buffer sizes
@@ -168,7 +219,8 @@ tools/
 ## Running
 
 ```bash
-cargo test                          # 129 tests
+cargo test                          # 173 tests
+cargo bench --bench tiers           # all four Vela tiers head-to-head
 cargo bench --bench scan            # classifiers, phase breakdown, scanners
 cargo bench --bench parse           # DOM parse vs the field
 cargo bench --bench query           # parse + access patterns
