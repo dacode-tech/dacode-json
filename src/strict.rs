@@ -174,7 +174,7 @@ impl StrictParser {
     pub fn with_capacity(max_input_len: usize) -> Self {
         let capped = max_input_len.min(MAX_INPUT_LEN);
         let mut p = Self::new();
-        p.si = StructuralIndex::with_capacity(capped + 1);
+        p.si = StructuralIndex::with_capacity(capped + 1 + crate::scan::SPILL);
         p.pool = Pool::with_capacity(workspace_pool_capacity_for(capped));
         p
     }

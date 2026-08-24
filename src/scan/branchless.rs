@@ -45,6 +45,7 @@
 //! `tests/scanner_equivalence.rs::documented_divergence_backslash_outside_string`.
 
 use super::scalar::{scan_range, TailState};
+use super::table;
 use super::StructuralIndex;
 
 /// simdjson's `ODD_BITS`, narrowed to 16 bits. `0xAAAA`.
@@ -82,6 +83,50 @@ pub fn classify(chunk: &[u8; 16]) -> Classified {
     #[cfg(not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2"))))]
     {
         classify_scalar(chunk)
+    }
+}
+
+/// Selects how a 16-byte chunk is turned into class bitmasks.
+///
+/// Implemented as a trait rather than a runtime flag so each scanner is
+/// monomorphised and the choice costs nothing at the call site.
+pub trait Classify {
+    fn classify(chunk: &[u8; 16]) -> Classified;
+}
+
+/// Vela's approach: eight vector compares plus five ORs
+/// (`runtime/simd_json_branchless.ll:26-40`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Compare;
+
+impl Classify for Compare {
+    #[inline]
+    fn classify(chunk: &[u8; 16]) -> Classified {
+        classify(chunk)
+    }
+}
+
+/// The technique Vela specified and never built: two nibble-shuffle table
+/// lookups plus one AND. See [`crate::scan::table`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Table;
+
+impl Classify for Table {
+    #[inline]
+    fn classify(chunk: &[u8; 16]) -> Classified {
+        table::classify_shuffle(chunk)
+    }
+}
+
+/// Table for the structural mask, compares for quote and backslash — see
+/// [`crate::scan::table::classify_hybrid`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Hybrid;
+
+impl Classify for Hybrid {
+    #[inline]
+    fn classify(chunk: &[u8; 16]) -> Classified {
+        table::classify_hybrid(chunk)
     }
 }
 
@@ -187,7 +232,7 @@ struct Carry {
 /// Port of `json_branchless_chunk` (`structural_simd.vl:326-355`), minus the
 /// bit-packing Vela needs to return three values through one `i64`.
 #[inline]
-fn chunk(input: &[u8], offset: usize, carry: Carry) -> (u16, Carry) {
+fn chunk<C: Classify>(input: &[u8], offset: usize, carry: Carry) -> (u16, Carry) {
     let Some(bytes) = input.get(offset..offset + 16) else {
         return (0, carry);
     };
@@ -196,7 +241,7 @@ fn chunk(input: &[u8], offset: usize, carry: Carry) -> (u16, Carry) {
     };
 
     // Step 1: classify.
-    let c = classify(arr);
+    let c = C::classify(arr);
 
     // Step 2: escape detection.
     let (escaped, esc_carry) = find_escaped(c.backslash, carry.esc);
@@ -235,9 +280,47 @@ impl Carry {
     }
 }
 
-/// S6 — `json_structural_scan_branchless_into`, 16 bytes per iteration.
+/// S6 — `json_structural_scan_branchless_into`, using Vela's comparison
+/// classifier.
 #[inline]
 pub fn scan_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_into_with::<Compare, true>(input, out);
+}
+
+/// S6 with the nibble-shuffle table classifier.
+#[inline]
+pub fn scan_table_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_into_with::<Table, true>(input, out);
+}
+
+/// S6b with the nibble-shuffle table classifier.
+#[inline]
+pub fn scan_table_2x_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_2x_into_with::<Table, true>(input, out);
+}
+
+/// S6b, hybrid classifier, but with Vela's original serial extraction loop
+/// instead of the unrolled one. Isolates the cost of the extractor.
+#[inline]
+pub fn scan_hybrid_2x_serial_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_2x_into_with::<Hybrid, false>(input, out);
+}
+
+/// S6 with the hybrid classifier.
+#[inline]
+pub fn scan_hybrid_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_into_with::<Hybrid, true>(input, out);
+}
+
+/// S6b with the hybrid classifier.
+#[inline]
+pub fn scan_hybrid_2x_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_2x_into_with::<Hybrid, true>(input, out);
+}
+
+/// S6 — 16 bytes per iteration, generic over the classifier.
+#[inline]
+pub fn scan_into_with<C: Classify, const UNROLL: bool>(input: &[u8], out: &mut StructuralIndex) {
     out.reserve_for(input.len());
 
     let len = input.len();
@@ -245,22 +328,29 @@ pub fn scan_into(input: &[u8], out: &mut StructuralIndex) {
     let mut carry = Carry::default();
 
     while offset + 16 <= len {
-        let (mask, next) = chunk(input, offset, carry);
+        let (mask, next) = chunk::<C>(input, offset, carry);
         carry = next;
-        out.write_bits(offset, u32::from(mask));
+        out.write_bits::<UNROLL>(offset, u32::from(mask));
         offset += 16;
     }
 
     scan_range(input, offset, carry.to_tail(), out);
 }
 
-/// S6b — `json_structural_scan_branchless2x_into`, 32 bytes per iteration.
+/// S6b — `json_structural_scan_branchless2x_into`, using Vela's comparison
+/// classifier.
 ///
 /// Two chunks are combined into one 32-bit mask so the extraction loop is
 /// entered half as often; the carry from chunk A feeds chunk B, so the two
 /// classifications pipeline but the escape/string state stays sequential.
 #[inline]
 pub fn scan_2x_into(input: &[u8], out: &mut StructuralIndex) {
+    scan_2x_into_with::<Compare, true>(input, out);
+}
+
+/// S6b — 32 bytes per iteration, generic over the classifier.
+#[inline]
+pub fn scan_2x_into_with<C: Classify, const UNROLL: bool>(input: &[u8], out: &mut StructuralIndex) {
     out.reserve_for(input.len());
 
     let len = input.len();
@@ -268,19 +358,19 @@ pub fn scan_2x_into(input: &[u8], out: &mut StructuralIndex) {
     let mut carry = Carry::default();
 
     while offset + 32 <= len {
-        let (mask_a, carry_a) = chunk(input, offset, carry);
-        let (mask_b, carry_b) = chunk(input, offset + 16, carry_a);
+        let (mask_a, carry_a) = chunk::<C>(input, offset, carry);
+        let (mask_b, carry_b) = chunk::<C>(input, offset + 16, carry_a);
         carry = carry_b;
 
         let combined = u32::from(mask_a) | (u32::from(mask_b) << 16);
-        out.write_bits(offset, combined);
+        out.write_bits::<UNROLL>(offset, combined);
         offset += 32;
     }
 
     if offset + 16 <= len {
-        let (mask, next) = chunk(input, offset, carry);
+        let (mask, next) = chunk::<C>(input, offset, carry);
         carry = next;
-        out.write_bits(offset, u32::from(mask));
+        out.write_bits::<UNROLL>(offset, u32::from(mask));
         offset += 16;
     }
 

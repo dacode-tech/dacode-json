@@ -70,7 +70,7 @@ impl Workspace {
     pub fn with_capacity(max_input_len: usize) -> Self {
         let capped = max_input_len.min(MAX_INPUT_LEN);
         Workspace {
-            si: StructuralIndex::with_capacity(capped + 1),
+            si: StructuralIndex::with_capacity(capped + 1 + crate::scan::SPILL),
             pool: Pool::with_capacity(workspace_pool_capacity_for(capped)),
             stack: Stack::new(),
             scanner: Scanner::default(),
