@@ -9,10 +9,18 @@ publish = false
 
 [dependencies]
 serde = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+simd-json = { version = "0.18", optional = true }
+sonic-rs = { version = "0.5", optional = true }
 # Shortest round-trip float formatting (Schubfach). serde_json 1.0.151 uses
 # the same crate, so output is byte-identical and the benchmark compares
 # serializers rather than float printers.
 zmij = { version = "1", optional = true }
+
+[[bin]]
+name = "profile"
+path = "src/bin/profile.rs"
+required-features = ["profiling"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -20,17 +28,26 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 simd-json = "0.18"
 sonic-rs = "0.5"
+# The reference zero-copy serialization framework for Rust, for the
+# jsonflat comparison.
+rkyv = "0.8"
 
 [features]
 default = ["serde"]
 # `serde::Deserializer` over the node pool - see src/de.rs.
 serde = ["dep:serde", "dep:zmij"]
+# Pulls in the comparison parsers so `src/bin/profile.rs` can build.
+profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# Line tables only: no effect on codegen, but a sampling profiler can
+# resolve symbols. See docs/PROFILING.md.
+debug = 1
+# `panic = "abort"` is deliberately NOT set: the benches and the profiling
+# binary link dev-dependencies that unwind.
 
 [profile.bench]
 opt-level = 3
@@ -52,4 +69,8 @@ harness = false
 
 [[bench]]
 name = "structs"
+harness = false
+
+[[bench]]
+name = "zerocopy"
 harness = false

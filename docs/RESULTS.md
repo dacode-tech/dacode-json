@@ -11,6 +11,27 @@ Corpora: generated deterministically by `src/corpus.rs` (no data files)
 
 ---
 
+## 0. Contents
+
+* §1–5 — the original DOM-parsing comparison
+* §6 — bugs found in the Vela sources
+* §7 — recommendations
+* §8 — **table-driven classification**: the optimisation Vela specified and
+  never built, and why it would not have helped
+* §9 — **Stage 1 rebuilt**: the real bottleneck, 2.4–3.8× Vela
+* §10 — **struct serialize / deserialize** vs serde_json, simd-json, sonic-rs
+* §11 — float precision: where serde_json is wrong
+
+Companion documents:
+
+| | |
+|---|---|
+| `docs/PROFILING.md` | where every parser spends its time, and how to reproduce |
+| `docs/ZEROCOPY.md` | the YaFF question: a zero-copy wire format for JSON |
+| `docs/UNWRAP_FREE.md` | panic-free design study |
+
+---
+
 ## 1. The headline
 
 Porting Vela's tier-3 algorithm to Rust, unchanged, makes it **2.3–3.7× faster**
@@ -315,13 +336,170 @@ Ordered by value per unit of effort.
 
 ---
 
+## 8. Table-driven classification — the optimisation Vela specified
+
+`docs/stage2/P1_2_JSON_TIERS.md:88-92` lists, for tier 3:
+
+> *Branchless character classification (**lookup tables**)*
+
+and `docs/stage2/JSON_DESIGN.md:286-291` lists simdjson's "Lookup-4"
+algorithm. **Neither was ever built.** Tier 3 ships eight `icmp eq` plus
+five `or` (`runtime/simd_json_branchless.ll:26-40`) and an if-chain in the
+scalar path (`tier2/structural.vl:42-51`). There is no lookup table anywhere
+in Vela's JSON stack; the only real tables in the repository are the AES
+S-box (`crypto/aes.vl:23`) and the vendored simdjson/yyjson used as C
+benchmark baselines.
+
+So it was built here, both ways (`src/scan/table.rs`):
+
+* a 256-entry class table for the scalar scanner;
+* a nibble-shuffle pair evaluated with `vqtbl1q_u8`. simdjson's ARM64
+  tables distinguish two classes; three were needed (structural / quote /
+  backslash), so a new pair was derived and verified exhaustively over all
+  256 bytes.
+
+**It makes things slower.** Measured in isolation the shuffle table is 19%
+faster than Vela's compares; inside the scanner it is 2–8% *slower*, because
+classification is off Stage 1's critical path and a table needs an extra
+`cmtst` to reach the movemask. A hybrid — table for structural, compares for
+quote and backslash — is 32% faster in isolation and ~1.5% faster
+end-to-end.
+
+Full analysis in `docs/PROFILING.md` §1. **Vela shipping the comparison
+version was accidentally the right call.**
+
+---
+
+## 9. Stage 1 rebuilt
+
+Phase decomposition showed classification is 13–25% of Stage 1 and position
+extraction is **64–82%**. Replacing Vela's serial per-bit `cttz` loop with
+simdjson's unconditional eight-slot write:
+
+| corpus | Vela's algorithm, ported | + hybrid classifier + unrolled extract |
+|---|---|---|
+| records | 1.159 GiB/s | **2.049 GiB/s** |
+| int_array | 2.113 GiB/s | **3.246 GiB/s** |
+| strings | 2.318 GiB/s | 2.140 GiB/s |
+| geo_int | 1.164 GiB/s | **2.005 GiB/s** |
+| geo_float | 1.935 GiB/s | **2.509 GiB/s** |
+
+Against Vela's reported 914 MB/s: **2.4× to 3.8×**. (`strings` regresses 8%
+— its structural density is 0.05/byte, so writing eight slots to record one
+position wastes stores.)
+
+---
+
+## 10. Struct serialize / deserialize
+
+`src/de.rs` and `src/ser.rs` add `serde` support over the pool, so every
+contender fills the *same* `#[derive(Deserialize)]` type. This is the
+fairest comparison here: all four do identical work and produce identical
+results.
+
+### Deserialize into `Vec<Record>` — MiB/s
+
+| | 256 KiB | 4 MiB |
+|---|---|---|
+| sonic-rs | **390** | **380** |
+| simd-json | 416 | 348 |
+| serde_json | 289 | 293 |
+| vela (strict + pool) | 181 | 194 |
+
+**The pool loses, and the reason is architectural.** `serde_json` and
+sonic-rs are single-pass streaming deserializers: they never build an
+intermediate representation, because filling a struct does not need one. The
+pool must be built first and then walked. Profiling puts that split at
+roughly 45% parse / 55% walk, with 7.6% in `skip_subtree` alone — the cost
+of variable-width children.
+
+This is the mirror image of §3, where the same representation beat
+everything on string-heavy DOM construction. A tape is the right shape for
+"parse once, query repeatedly" and the wrong shape for "parse once, discard".
+
+### Partial deserialization (2 of 7 fields) — MiB/s, 4 MiB
+
+| | |
+|---|---|
+| sonic-rs | **552** |
+| serde_json | 526 |
+| simd-json | 453 |
+| vela | 235 |
+
+Skipping via `skip_subtree` is an index walk with no byte scanning, which
+sounds like it should win — but the pool still had to be *built* for all
+seven fields first. Streaming parsers skip the bytes without ever
+representing them.
+
+### Serialize `Vec<Record>` — MiB/s, 4 MiB
+
+| | |
+|---|---|
+| sonic-rs | **1007** |
+| serde_json | 761 |
+| vela | 717 |
+| simd-json | 702 |
+
+Output is byte-identical to `serde_json` (verified over 5 000 random
+documents plus the full corpus).
+
+### String escaping in isolation
+
+Escaping is 62% of serialization self time, so it is measured separately:
+
+| | clean | sparse escapes | dense escapes |
+|---|---|---|---|
+| vela | **9.24 GiB/s** | **1.85 GiB/s** | 424 MiB/s |
+| serde_json | 2.19 GiB/s | 1.52 GiB/s | **686 MiB/s** |
+| sonic-rs | 25.10 GiB/s | 2.23 GiB/s | 597 MiB/s |
+
+4.2× ahead of `serde_json` on clean text after vectorising the escape
+scanner (it was 1.6 GiB/s with a scalar OR-reduction). Still well behind
+sonic-rs, which vectorises the copy as well as the search.
+
+Relevant to Vela: **`emit_v2.vl` is documented as a "DualBuffer-backed O(n)
+emitter" but calls `json_escape_string` (`common.vl:52-80`), which is a
+per-byte string-concat loop.** Every string written through the "O(n)"
+emitter is still escaped in quadratic time.
+
+---
+
+## 11. serde_json's default float parser is not correctly rounded
+
+Found while building the differential tests. For `-12715.4527e-19`:
+
+```text
+correctly rounded (Python, str::parse, us) : -0x1.6e7f7b0ed8f08p-50
+serde_json, default features               : -0x1.6e7f7b0ed8f09p-50
+```
+
+Across 20 000 randomly generated high-precision literals, `serde_json`
+deviates from the correctly-rounded value on **5 096 of them (25%)**; the
+strict parser here matches `str::parse` on all 20 000. `serde_json` ships a
+`float_roundtrip` feature that fixes this, off by default.
+
+Pinned down by `tests/serde_de.rs::float_precision_beats_serde_json_default`
+rather than papered over — the differential tests allow 1 ULP of slack and
+say why.
+
+---
+
 ## Reproducing
 
 ```bash
-cargo test                       # 73 tests, incl. 60k differential cases
-cargo bench --bench scan         # Stage 1
-cargo bench --bench parse        # full parse vs serde_json / simd-json / sonic-rs
-cargo bench --bench query        # parse + access patterns
-cargo clippy --lib               # enforces panic-freedom
-cargo run --example typestate    # the unwrap-free demo
+cargo test                          # 129 tests
+cargo bench --bench scan            # Stage 1: classifiers, phases, scanners
+cargo bench --bench parse           # DOM parse vs serde_json / simd-json / sonic-rs
+cargo bench --bench query           # parse + access patterns
+cargo bench --bench structs         # struct de/ser + escaping
+cargo bench --bench zerocopy        # jsonflat vs rkyv vs re-parsing
+cargo clippy --lib                  # enforces panic-freedom
+cargo run --example typestate       # the unwrap-free demo
+cargo run --release --example sizes # jsonflat buffer sizes
+tools/profile.sh vela_de 200        # sampling profile with symbols
 ```
+
+Test coverage: 129 tests, including ~60 000 differential cases against
+`serde_json`, exhaustive verification of both classifier tables over all 256
+bytes, 40 000 hostile `jsonflat` buffers, and 30 000 random-byte inputs
+asserting panic freedom.

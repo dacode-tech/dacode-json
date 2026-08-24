@@ -91,8 +91,9 @@ fn bench_classifier(c: &mut Criterion) {
     let mut group = c.benchmark_group("classifier_only");
     group.throughput(Throughput::Bytes(bytes.len() as u64));
 
-    let variants: [(&str, fn(&[u8; 16]) -> _); 5] = [
-        ("scalar_match", classify_scalar as fn(&[u8; 16]) -> _),
+    type ClassifyFn = fn(&[u8; 16]) -> vela_json::scan::branchless::Classified;
+    let variants: [(&str, ClassifyFn); 5] = [
+        ("scalar_match", classify_scalar as ClassifyFn),
         ("lut256", classify_lut256),
         ("simd_compare_8x", classify),
         ("simd_shuffle_table", classify_shuffle),

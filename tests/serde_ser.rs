@@ -3,6 +3,8 @@
 //! deserializer.
 
 #![cfg(feature = "serde")]
+// 3.141592653589793 below is test data, not an attempt at PI.
+#![allow(clippy::approx_constant)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

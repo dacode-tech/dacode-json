@@ -267,6 +267,7 @@ fn bench_serialize(c: &mut Criterion) {
 fn bench_escaping(c: &mut Criterion) {
     let mut group = c.benchmark_group("string_escaping");
 
+    #[allow(clippy::type_complexity)]
     let cases: [(&str, String); 3] = [
         ("clean", "abcdefghij".repeat(6_000)),
         (

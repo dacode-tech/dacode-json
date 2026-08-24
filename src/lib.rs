@@ -82,6 +82,7 @@
 
 pub mod builder;
 pub mod corpus;
+pub mod flat;
 #[cfg(feature = "serde")]
 pub mod de;
 #[cfg(feature = "serde")]

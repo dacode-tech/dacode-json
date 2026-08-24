@@ -6,14 +6,22 @@ question: *is the Vela algorithm slow, or was velac's code generation slow?*
 Answer: **the algorithm is fine.** The same algorithm, ported without
 redesign, runs 2.3–3.7× faster under rustc/LLVM.
 
-| Stage | Vela ([`JSON_IMPROVEMENT_PLAN.md:52-73`][plan]) | This port | Speedup |
+| Stage | Vela ([`JSON_IMPROVEMENT_PLAN.md:52-73`][plan]) | Straight port | After profiling |
 |---|---|---|---|
-| Stage 1 structural scan | 914 MB/s | 1.13–2.34 GiB/s | **1.3–2.6×** |
-| Full DOM build | 166 MB/s | 383–606 MiB/s | **2.3–3.7×** |
-| 68-byte document | 5 590 ns | 73 ns | **76×** |
+| Stage 1 structural scan | 914 MB/s | 1.13–2.34 GiB/s | **2.14–3.25 GiB/s** (2.4–3.8×) |
+| Full DOM build | 166 MB/s | 383–606 MiB/s | — (2.3–3.7×) |
+| 68-byte document | 5 590 ns | 73 ns | — (76×) |
 
-Full numbers, methodology and caveats: **[`docs/RESULTS.md`](docs/RESULTS.md)**
-The `unwrap`-free design study: **[`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md)**
+The third column is the interesting one: profiling moved Stage 1 a further
+1.5× past the straight port, by fixing the part the design docs were *not*
+pointing at.
+
+| document | what is in it |
+|---|---|
+| **[`docs/RESULTS.md`](docs/RESULTS.md)** | all benchmarks, methodology, caveats, bugs found |
+| **[`docs/PROFILING.md`](docs/PROFILING.md)** | where every parser spends its time; how to reproduce |
+| **[`docs/ZEROCOPY.md`](docs/ZEROCOPY.md)** | a YaFF-style zero-copy wire format for JSON |
+| **[`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md)** | panic-free design study |
 
 [plan]: ../../../vela/docs/stage2/JSON_IMPROVEMENT_PLAN.md
 
@@ -69,10 +77,33 @@ let err = p.validate(br#"{"a":1]"#).unwrap_err();
 assert_eq!(err.to_string(), "mismatched bracket at byte 6");
 ```
 
-## Findings fed back to Vela
+## Headline findings
 
-Four issues in the original, found while porting. Details in
-[`docs/RESULTS.md` §6](docs/RESULTS.md).
+**The lookup-table classifier Vela's design docs specify would have made it
+slower.** `P1_2_JSON_TIERS.md:91` asks for "branchless character
+classification (lookup tables)" and it was never built. Built here both
+ways: the nibble-shuffle table is 19% faster in isolation and **2-8% slower
+end-to-end**, because classification is off Stage 1's critical path.
+
+**Position extraction is 64-82% of Stage 1; classification is 13-25%.**
+Replacing Vela's serial per-bit loop with simdjson's unconditional
+eight-slot write is worth +30-77%.
+
+**A tape is the wrong shape for struct deserialization.** The same
+representation that beats simd-json by 3.5x on string-heavy DOM building
+loses to `serde_json` by 1.5x when filling a `#[derive(Deserialize)]`
+struct, because streaming parsers never build an intermediate at all.
+
+**`serde_json`'s default float parser is not correctly rounded** — it
+deviates on 25% of high-precision literals. Ours matches `str::parse`.
+
+**Vela's `emit_v2.vl` is not O(n).** It is documented as a "DualBuffer-backed
+O(n) emitter" but calls `json_escape_string` (`common.vl:52`), a per-byte
+string-concat loop, so string output is quadratic.
+
+## Bugs in the Vela sources
+
+Found while porting. Details in [`docs/RESULTS.md` §6](docs/RESULTS.md).
 
 1. **S6/S6b disagree with the scalar scanner on invalid input.** A backslash
    outside a string escapes the next byte in the branchless scanner but not
@@ -84,13 +115,15 @@ Four issues in the original, found while porting. Details in
 3. `pool_container_to_json` reads object children from `payload` but array
    children from `idx + 1` — works only by accident.
 4. `json_pool_object_get_float` is declared `i64`.
+5. `emit_v2.vl`'s quadratic escaping, above.
 
 ## Panic freedom
 
 No `unwrap`, `expect`, `panic!` or slice indexing in library code, enforced
 by `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
-clippy::indexing_slicing, ...)]` and tested by 30 000 random-byte and
-every-prefix fuzz cases.
+clippy::indexing_slicing, ...)]` and tested by 30 000 random-byte inputs,
+every prefix of a valid document, and 40 000 corrupted `jsonflat` buffers
+(where the buffer *is* the data structure, so a flipped byte is an attack).
 
 ## Layout
 
@@ -99,38 +132,52 @@ src/
   tag.rs         node tag encoding (aux << 8 | type)
   pool.rs        the flat 16-byte node pool
   scan/
-    mod.rs       StructuralIndex + batch bit extraction
+    mod.rs       StructuralIndex + unrolled bit extraction
     scalar.rs    byte-at-a-time reference scanner
-    branchless.rs  S6 / S6b, classify / find_escaped / prefix_xor
-    neon.rs      AArch64 classify
+    branchless.rs  S6 / S6b, generic over the classifier
+    neon.rs      AArch64 compare classifier
+    table.rs     the lookup tables Vela specified but never built
   scalar.rs      __json_parse_scalar_fast, quirks intact
   builder.rs     Stage 2 state machine
   query.rs       Doc / Value / entries / elements / skip_subtree
   unescape.rs    correct decoder + Vela's lossy one, for comparison
   workspace.rs   reusable arena
   strict.rs      RFC 8259 parser over the same pool
+  de.rs          serde::Deserializer over the pool
+  ser.rs         serde::Serializer with a vectorised escaper
+  flat.rs        jsonflat: zero-copy wire format (the YaFF question)
   corpus.rs      deterministic test/bench data
+  bin/profile.rs profiling workloads
 tests/
   scanner_equivalence.rs   Stage 1 oracle tests (port of t859 + fuzz)
+  classifier.rs            all 256 bytes, all 9 scanners
   faithful_semantics.rs    quirks pinned + panic freedom
   strict_conformance.rs    JSONTestSuite-style + serde_json differential
+  serde_de.rs              deserializer vs serde_json
+  serde_ser.rs             serializer, byte-identical to serde_json
+  flat.rs                  roundtrip + 40k hostile buffers
 benches/
-  scan.rs   parse.rs   query.rs
+  scan.rs  parse.rs  query.rs  structs.rs  zerocopy.rs
 examples/
   typestate.rs   runnable unwrap-free demo
-docs/
-  RESULTS.md   UNWRAP_FREE.md
+  sizes.rs       jsonflat buffer sizes
+tools/
+  profile.sh  symbolicate.py
 ```
 
 ## Running
 
 ```bash
-cargo test                       # 73 tests, incl. 60k differential cases
-cargo bench --bench scan
-cargo bench --bench parse
-cargo bench --bench query
-cargo clippy --lib               # enforces panic freedom
+cargo test                          # 129 tests
+cargo bench --bench scan            # classifiers, phase breakdown, scanners
+cargo bench --bench parse           # DOM parse vs the field
+cargo bench --bench query           # parse + access patterns
+cargo bench --bench structs         # struct de/ser + escaping
+cargo bench --bench zerocopy        # jsonflat vs rkyv vs re-parsing
+cargo clippy --lib                  # enforces panic freedom
 cargo run --example typestate
+cargo run --release --example sizes
+tools/profile.sh vela_de 200        # sampling profile with symbols
 ```
 
 Toolchain: `rustc 1.95.0`. Nothing depends on a feature newer than 1.61.
