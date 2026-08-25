@@ -100,5 +100,75 @@ fn bench_split(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_stage2, bench_split);
+/// The floor for *any* index-fed builder.
+///
+/// Walks the structural index exactly as the real builder does — read the
+/// position, read the byte at it, dispatch on it — and then does no work at
+/// all. No pool writes, no scalar parsing, no stack.
+///
+/// This bounds what a smarter Stage 2 could ever achieve. If the floor is
+/// already close to the real builder's throughput, the dispatch is not the
+/// problem and rewriting it cannot help.
+fn bench_floor(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stage2_floor");
+    group.sample_size(50);
+
+    #[inline(never)]
+    fn walk_only(input: &[u8], positions: &[u32]) -> usize {
+        // Same shape as the real loop: one position load, one input load at
+        // a data-dependent offset, one dispatch. Accumulate so nothing can
+        // be optimised away.
+        let mut acc = 0usize;
+        for &p in positions {
+            let pos = p as usize;
+            let ch = input.get(pos).copied().unwrap_or(0);
+            acc += match ch {
+                b'{' => 1,
+                b'}' => 2,
+                b'[' => 3,
+                b']' => 4,
+                b'"' => 5,
+                b':' => 6,
+                b',' => 7,
+                _ => 8,
+            };
+        }
+        acc
+    }
+
+    /// Even cheaper: never touch `input` at all, only the index. Isolates
+    /// the cost of the data-dependent load into the document.
+    #[inline(never)]
+    fn positions_only(positions: &[u32]) -> usize {
+        let mut acc = 0usize;
+        for &p in positions {
+            acc += p as usize & 7;
+        }
+        acc
+    }
+
+    for (name, json) in corpus::suite(1 << 20, SEED) {
+        let p = prepare(&json);
+        let bytes = p.input.len();
+        group.throughput(Throughput::Bytes(bytes as u64));
+
+        let input = p.input.clone();
+        let pos = p.si.positions().to_vec();
+
+        group.bench_with_input(BenchmarkId::new("positions_only", name), &name, |b, _| {
+            b.iter(|| black_box(positions_only(black_box(&pos))));
+        });
+        group.bench_with_input(BenchmarkId::new("walk_dispatch", name), &name, |b, _| {
+            b.iter(|| black_box(walk_only(black_box(&input), black_box(&pos))));
+        });
+        let mut q = prepare(&json);
+        group.bench_with_input(BenchmarkId::new("real_builder", name), &name, |b, _| {
+            b.iter(|| black_box(w_build(&mut q)));
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_floor, bench_stage2, bench_split);
 criterion_main!(benches);

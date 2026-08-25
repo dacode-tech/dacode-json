@@ -328,6 +328,65 @@ The lesson is the same one §1 taught about the classifier: reasoning about
 instruction counts predicts optimisation outcomes badly, and the only
 reliable move is to measure the change.
 
+### The proposed rewrite, measured before writing it
+
+§3b ended by proposing a context-specialised walk loop — separate inner
+loops for object bodies and array bodies, so branches become predictable —
+on the theory that the generic `match ch` dispatch was mispredicting.
+
+Two measurements killed that idea before any of it was written.
+
+**First, the arithmetic.** `records` Stage 2 is 417 000 structurals in
+836 µs: about **7 cycles per iteration** at 3.5 GHz. A single branch
+mispredict costs ~15 cycles. The loop cannot be mispredict-dominated; the
+branch predictor is already doing well.
+
+**Second, the floor.** `benches/stage2.rs::bench_floor` walks the index
+exactly as the builder does — load the position, load `input[pos]`,
+dispatch — and then does nothing. That bounds what *any* index-fed Stage 2
+can reach.
+
+| corpus | index only | + load & dispatch (floor) | real builder | headroom |
+|---|---|---|---|---|
+| records | 29.9 GiB/s | 1.74 GiB/s | 1.23 GiB/s | **1.4×** |
+| int_array | 57.2 GiB/s | 4.99 GiB/s | 684 MiB/s | 7.3× |
+| strings | 224 GiB/s | 16.0 GiB/s | 15.8 GiB/s | **1.01×** |
+| geo_int | 27.6 GiB/s | 1.76 GiB/s | 574 MiB/s | 3.1× |
+| geo_float | 54.5 GiB/s | 3.54 GiB/s | 878 MiB/s | 4.0× |
+
+On `records` the floor is only **1.4× above the real builder**, and that
+floor already includes the dispatch. So a perfect rewrite of the dispatch
+buys at most 41% there, and nothing at all on `strings`. The proposal was
+aimed at the wrong thing.
+
+### Where the cost actually is
+
+The table says it plainly. Reading the index is free — 28–224 GiB/s. Adding
+one load of `input[pos]` collapses it to 1.7–16 GiB/s, a **17× drop on
+`records`**. That data-dependent load into the document, not the branch, is
+what the walk loop spends its time on.
+
+And where there *is* large headroom — `int_array` at 7.3×, `geo_float` at
+4.0× — the gap is below the floor line, i.e. in work the floor benchmark
+skips: `parse_scalar_fast` and the node writes. Those corpora are
+number-dense, which matches `parse_scalar_fast` being 21.7% of Stage 2
+overall and much more than that on numeric data.
+
+So the two real targets, in order:
+
+1. **Number parsing.** One `acc * 10 + digit` per byte, called once per
+   numeric node. Explains the `int_array` / `geo_int` / `geo_float` gaps
+   entirely. A SWAR or SIMD digit parser is the standard fix.
+2. **Eliminate the `input[pos]` load.** Stage 1 *already knows* which
+   character it matched — it came from a specific classification mask — but
+   throws that away and stores only the offset, forcing Stage 2 to go back
+   to the document for it. Packing a 3-bit class alongside a 29-bit
+   position keeps the index at 4 bytes per entry and removes the load
+   entirely for dispatch. The `index only` column suggests most of the 17×
+   is recoverable.
+
+Neither is the rewrite proposed in §3b. Both are smaller.
+
 ### What is actually left
 
 `parse_scalar_fast` at 21.7% is the clearest remaining target, and it
