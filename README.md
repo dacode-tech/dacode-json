@@ -9,8 +9,8 @@ Answer: **the algorithms are fine.** Ported without redesign, tier 3 runs
 | Stage | Vela ([`JSON_IMPROVEMENT_PLAN.md:52-73`][plan]) | Straight port | After profiling |
 |---|---|---|---|
 | Stage 1 structural scan | 914 MB/s | 1.13–2.34 GiB/s | **2.14–3.25 GiB/s** (2.4–3.8×) |
-| Full DOM build | 166 MB/s | 383–606 MiB/s | — (2.3–3.7×) |
-| 68-byte document | 5 590 ns | 73 ns | — (76×) |
+| Full DOM build | 166 MB/s | 383–606 MiB/s | **450–785 MiB/s** (2.7–4.7×) |
+| 68-byte document | 5 590 ns | 75 ns | — (75×) |
 
 The third column is the interesting one: profiling moved Stage 1 a further
 1.5× past the straight port, by fixing the part the design docs were *not*
@@ -241,6 +241,7 @@ tools/profile.sh yyjson 200         # ...including the C baselines
 tools/memprofile.sh records 10485760   # memory matrix
 ./target/release/memprofile selftest   # calibrate the memory instrument
 tools/cbench.sh c_parse_10mb        # isolated cross-language benchmark
+tools/isolate.sh parse '^parse_10mb/'  # one process per benchmark, any bench
 ```
 
 Toolchain: `rustc 1.95.0`. Nothing depends on a feature newer than 1.61.

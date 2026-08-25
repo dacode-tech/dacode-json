@@ -1,5 +1,13 @@
 # Results
 
+> **All numbers below were re-measured with one process per benchmark**
+> (`tools/isolate.sh`) after a harness problem was found in
+> `benches/cbaseline.rs`. See §12 for the validation: `benches/parse.rs` and
+> `benches/query.rs` turned out **not** to be affected (≤1.8% difference),
+> so the earlier conclusions stand — but the absolute figures for this port
+> were stale by 18–30%, because the Stage 1 work in §9 landed after they
+> were first recorded.
+
 Machine: Apple M2 Max (12 core), 32 GB, macOS 15.6.1
 Toolchain: `rustc 1.95.0 (59807616e 2026-04-14)`, `opt-level=3`, `lto="fat"`, `codegen-units=1`
 Harness: Criterion 0.5, 30–100 samples, throughput in MiB/s of **input** bytes
@@ -94,15 +102,20 @@ Throughput in MiB/s. **Bold** is the best in each row.
 
 | corpus | vela<br>faithful | vela<br>strict | serde_json<br>Value | simd-json<br>tape | simd-json<br>borrowed | sonic-rs<br>Value |
 |---|---|---|---|---|---|---|
-| records | 606 | 366 | 123 | **662** | 240 | 571 |
-| int_array | **516** | 387 | 307 | 483 | 261 | 515 |
-| strings | **1 963** | 439 | 251 | 568 | 517 | 709 |
-| geo_int | **383** | 266 | 97 | 368 | 114 | 322 |
-| geo_float | 593 | 301 | 172 | **598** | 204 | 503 |
+| records | **785** | 419 | 132 | 678 | 241 | 591 |
+| int_array | **559** | 409 | 281 | 502 | 270 | 542 |
+| strings | **1 893** | 431 | 250 | 541 | 505 | 717 |
+| geo_int | **450** | 294 | 101 | 380 | 115 | 324 |
+| geo_float | **654** | 319 | 178 | 613 | 207 | 507 |
 
-1 MiB numbers are within 5% of these except `simd_json_tape/int_array`
-(582 vs 483) and `serde_json/records` (131 vs 123), where cache effects
-favour the smaller input.
+The port now leads every corpus, which it did not when these were first
+measured — the Stage 1 work in §9 moved it 8–30%. Competitor figures moved
+by at most 8% and mostly under 3%.
+
+Note this is `vela_faithful`, which skips validation and mangles floats.
+`vela_strict` is the comparable row and it loses to simd-json's tape and
+sonic-rs everywhere. And against the C libraries these were modelled on,
+both lose — see `docs/CBASELINE.md`.
 
 ### Do not read that table as a ranking
 
@@ -167,21 +180,28 @@ Time per parse, 68-byte document:
 
 | | time | vs Vela |
 |---|---|---|
-| `vela_faithful`, reused workspace | **73 ns** | 76× faster |
-| `simd_json::to_tape` | 116 ns | |
-| `vela_faithful`, fresh allocation | 135 ns | 41× faster |
-| `vela_strict`, reused workspace | 155 ns | |
-| `sonic_rs::Value` | 166 ns | |
-| `serde_json::Value` | 322 ns | |
+| `vela_faithful`, reused workspace | **75 ns** | 75× faster |
+| `simd_json::to_tape` | 111 ns | |
+| `vela_strict`, reused workspace | 132 ns | |
+| `sonic_rs::Value` | 159 ns | |
+| `vela_faithful`, fresh allocation | 190 ns | 29× faster |
+| `serde_json::Value` | 361 ns | |
 | *Vela `t860` measurement* | *5 590 ns* | *baseline* |
 | *yyjson (`t860`)* | *104 ns* | |
 | *simdjson (`t860`)* | *72 ns* | |
 
 Vela's 5 590 ns was three `mmap` calls, not parsing. Reusing a `Workspace`
-puts the port at 73 ns — level with the C libraries Vela was measured
+puts the port at 75 ns — level with the C libraries Vela was measured
 against, and it makes `json_parse_inline`'s 96 KB static BSS buffer (task J2)
-unnecessary. Even the *fresh allocation* path is 41× faster than Vela,
+unnecessary. Even the *fresh allocation* path is 29× faster than Vela,
 because `Vec` uses the allocator rather than going to the kernel.
+
+The two allocation-dominated rows — `vela_faithful_fresh` (135 → 190 ns) and
+`serde_json` (322 → 361 ns) — got *slower* under isolation, because a fresh
+process has cold allocator free lists where a shared one is warm from
+previous benchmarks. Neither figure is wrong; they answer different
+questions ("first call in a process" versus "steady state"). The isolated
+number is the conservative one.
 
 ---
 
@@ -194,19 +214,19 @@ a realistic access pattern (4 MiB of records).
 
 | | 256 KiB | 4 MiB |
 |---|---|---|
-| sonic-rs `Value` | **610** | **511** |
-| vela faithful | 492 | 487 |
-| vela strict | 324 | 322 |
-| sonic-rs lazy iter | 260 | 263 |
-| serde_json `Value` | 146 | 126 |
+| sonic-rs `Value` | **614** | 529 |
+| vela faithful | 582 | **593** |
+| vela strict | 365 | 369 |
+| sonic-rs lazy iter | 261 | 264 |
+| serde_json `Value` | 148 | 127 |
 
 **Read every field, decoding strings** — MiB/s:
 
 | | 256 KiB | 4 MiB |
 |---|---|---|
-| vela faithful | **386** | **389** |
-| vela strict | 274 | 277 |
-| serde_json `Value` | 145 | 134 |
+| vela faithful | **487** | **495** |
+| vela strict | 324 | 328 |
+| serde_json `Value` | 150 | 135 |
 
 The pool holds its advantage when everything is read, because decoding on
 demand into a `Cow<str>` still borrows for the (common) escape-free case.
@@ -217,10 +237,10 @@ whole approach:
 | | time |
 |---|---|
 | sonic-rs lazy pointer | **54 ns** |
-| vela faithful | 421 µs |
-| serde_json `Value` | 1 684 µs |
+| vela faithful | 342 µs |
+| serde_json `Value` | 1 669 µs |
 
-7 800× — because `sonic_rs::get(bytes, pointer![0, "name"])` never builds a
+6 400× — because `sonic_rs::get(bytes, pointer![0, "name"])` never builds a
 DOM at all. It skips to the first element and stops. Both Vela tiers, and
 every eager DOM parser, index all 256 KiB first.
 
@@ -485,6 +505,48 @@ say why.
 
 ---
 
+## 12. Validating the older numbers
+
+`benches/cbaseline.rs` was found to report one measurement 2.5× wrong
+(`docs/CBASELINE.md` §5): two independent causes, inlining drift between
+closures in one LTO'd function, and cross-benchmark interference from
+criterion's `iter_batched_ref` staging large inputs. That raised an obvious
+question about §3–§5, which were measured before the fix.
+
+They were checked properly rather than assumed. `git worktree` at the
+original commit, the same benchmark run both ways:
+
+| `parse_10mb/.../records`, original commit | shared process | isolated | Δ |
+|---|---|---|---|
+| `vela_faithful` | 611 MiB/s | 604 MiB/s | −1.2% |
+| `serde_json_value` | 134 MiB/s | 133 MiB/s | −0.7% |
+| `sonic_rs_value` | 587 MiB/s | 576 MiB/s | −1.8% |
+
+**`benches/parse.rs` was never affected.** The recorded 606 MiB/s was
+correct for the code at the time. So the entire 18–30% gain in the tables
+above is real improvement from the Stage 1 work in §9, not a harness
+correction.
+
+Why `cbaseline.rs` and not `parse.rs`: the C-baseline benchmark stages a
+`Padded` copy per `iter_batched_ref` batch *and* allocates a
+`YyPool::new(len * 24)` — over 250 MB of churn per corpus at 10 MB inputs.
+`parse.rs`'s simd-json staging is an order of magnitude less. The
+interference was real but needed that much allocator pressure to appear.
+
+Everything in §3–§5, §10 and `docs/CBASELINE.md`, `docs/TIERS.md`,
+`docs/MEMORY.md` is now measured with one process per benchmark
+(`tools/isolate.sh`), and every timed operation in `parse.rs` and
+`cbaseline.rs` goes through an `#[inline(never)]` wrapper so codegen cannot
+drift between contenders.
+
+**Lesson worth keeping:** a 2.5× swing with no code change is not exotic. If
+several allocation-heavy benchmarks share a process — especially across an
+FFI boundary, where the other language brings its own allocator behaviour —
+isolate them and verify with a known-good baseline before believing the
+output.
+
+---
+
 ## Reproducing
 
 ```bash
@@ -495,6 +557,9 @@ cargo bench --bench parse           # DOM parse vs serde_json / simd-json / soni
 cargo bench --bench query           # parse + access patterns
 cargo bench --bench structs         # struct de/ser + escaping
 cargo bench --bench zerocopy        # jsonflat vs rkyv vs re-parsing
+tools/isolate.sh parse '^parse_10mb/'  # one process per benchmark
+tools/memprofile.sh records 10485760   # memory matrix
+tools/cbench.sh c_parse_10mb           # vs yyjson / simdjson
 cargo clippy --lib                  # enforces panic-freedom
 cargo run --example typestate       # the unwrap-free demo
 cargo run --release --example sizes # jsonflat buffer sizes
