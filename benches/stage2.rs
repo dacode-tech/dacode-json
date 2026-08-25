@@ -1,0 +1,104 @@
+//! Stage 2 in isolation — the DOM builder, with Stage 1 already done.
+//!
+//! `docs/PROFILING.md` §3 shows simdjson spending 37–43% of its time in
+//! Stage 1 where this port spends 13–25%. Same two-stage architecture, so
+//! the port's Stage 2 must be proportionally much more expensive. This
+//! measures it directly, with the structural index pre-computed and reused,
+//! so nothing but the builder is timed.
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
+use vela_json::builder::{build_from_index, pool_capacity_for, Stack};
+use vela_json::corpus;
+use vela_json::pool::Pool;
+use vela_json::scan::{scan, Scanner, StructuralIndex};
+
+const SEED: u64 = 0x5CA7;
+
+/// Everything Stage 2 needs, prepared once.
+struct Prepared {
+    input: Vec<u8>,
+    si: StructuralIndex,
+    pool: Pool,
+    stack: Stack,
+}
+
+fn prepare(json: &str) -> Prepared {
+    let input = json.as_bytes().to_vec();
+    let si = scan(Scanner::default(), &input);
+    let mut pool = Pool::with_capacity(pool_capacity_for(si.len()));
+    let mut stack = Stack::new();
+    // Warm: fault the pages in and settle the capacity.
+    pool.reset(input.len());
+    build_from_index(&input, &si, &mut pool, &mut stack);
+    Prepared {
+        input,
+        si,
+        pool,
+        stack,
+    }
+}
+
+#[inline(never)]
+fn w_build(p: &mut Prepared) -> usize {
+    p.pool.reset(p.input.len());
+    build_from_index(&p.input, &p.si, &mut p.pool, &mut p.stack);
+    p.pool.len()
+}
+
+/// Stage 2 alone, per corpus.
+fn bench_stage2(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stage2_build");
+    group.sample_size(50);
+
+    for (name, json) in corpus::suite(1 << 20, SEED) {
+        let mut p = prepare(&json);
+        let bytes = p.input.len();
+        let nodes = p.pool.len();
+        let structurals = p.si.len();
+        println!(
+            "  {name:10} {bytes:>9} B  {structurals:>8} structurals  {nodes:>8} nodes  \
+             ({:.1} B/node)",
+            bytes as f64 / nodes.max(1) as f64
+        );
+
+        group.throughput(Throughput::Bytes(bytes as u64));
+        group.bench_with_input(BenchmarkId::new("build", name), &name, |b, _| {
+            b.iter(|| black_box(w_build(&mut p)));
+        });
+    }
+
+    group.finish();
+}
+
+/// Stage 1 and Stage 2 side by side on the same corpus, so their shares are
+/// directly comparable.
+fn bench_split(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stage_split");
+    group.sample_size(50);
+
+    for (name, json) in corpus::suite(1 << 20, SEED) {
+        let mut p = prepare(&json);
+        let bytes = p.input.len();
+        group.throughput(Throughput::Bytes(bytes as u64));
+
+        let mut idx = StructuralIndex::with_capacity(bytes + 64);
+        let input = p.input.clone();
+        group.bench_with_input(BenchmarkId::new("stage1_scan", name), &name, |b, _| {
+            b.iter(|| {
+                idx.clear();
+                vela_json::scan::scan_into(Scanner::default(), black_box(&input), &mut idx);
+                black_box(idx.len())
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("stage2_build", name), &name, |b, _| {
+            b.iter(|| black_box(w_build(&mut p)));
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_stage2, bench_split);
+criterion_main!(benches);

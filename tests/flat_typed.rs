@@ -431,3 +431,192 @@ fn typed_is_smaller_than_dynamic() {
         dynamic.len()
     );
 }
+
+// ---------------------------------------------------------------------
+// serde bridge — zero-copy deserialization into Rust structs
+// ---------------------------------------------------------------------
+
+#[cfg(feature = "serde")]
+mod serde_bridge {
+    use super::{Record, RecordFields};
+    use serde::Deserialize;
+    use vela_json::corpus;
+    use vela_json::flat::typed::{de, TypedView, TypedWriter};
+
+    /// Borrowing form: every string points into the buffer.
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct RowRef<'a> {
+        id: u64,
+        age: u32,
+        active: bool,
+        score: i64,
+        #[serde(borrow)]
+        name: &'a str,
+        #[serde(borrow)]
+        city: &'a str,
+        #[serde(borrow)]
+        tags: Vec<&'a str>,
+    }
+
+    /// Owning form, for comparison.
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct RowOwned {
+        id: u64,
+        age: u32,
+        active: bool,
+        score: i64,
+        name: String,
+        city: String,
+        tags: Vec<String>,
+    }
+
+    /// A subset — serde must skip the fields it was not asked for.
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct RowPartial {
+        id: u64,
+        score: i64,
+    }
+
+    fn sample() -> Vec<u8> {
+        let mut w = TypedWriter::<Record>::new();
+        w.record()
+            .u64(1)
+            .u32(30)
+            .bool(true)
+            .i64(-5)
+            .str("alpha")
+            .str("london")
+            .str_list(["x", "y", "z"]);
+        w.record()
+            .u64(u64::MAX)
+            .u32(0)
+            .bool(false)
+            .i64(i64::MIN)
+            .str("")
+            .str("paris")
+            .str_list::<[&str; 0]>([]);
+        w.finish()
+    }
+
+    #[test]
+    fn deserializes_into_borrowing_struct() {
+        let buf = sample();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+
+        let r: RowRef<'_> = de::from_row(&v, 0).expect("row 0");
+        assert_eq!(
+            r,
+            RowRef {
+                id: 1,
+                age: 30,
+                active: true,
+                score: -5,
+                name: "alpha",
+                city: "london",
+                tags: vec!["x", "y", "z"],
+            }
+        );
+
+        let r: RowRef<'_> = de::from_row(&v, 1).expect("row 1");
+        assert_eq!(r.id, u64::MAX);
+        assert_eq!(r.score, i64::MIN);
+        assert_eq!(r.name, "");
+        assert!(r.tags.is_empty());
+    }
+
+    /// The point of the exercise: no copying.
+    #[test]
+    fn borrowed_strings_point_into_the_buffer() {
+        let buf = sample();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+        let r: RowRef<'_> = de::from_row(&v, 0).expect("row");
+
+        let lo = buf.as_ptr() as usize;
+        let hi = lo + buf.len();
+        for (label, s) in [("name", r.name), ("city", r.city), ("tag", r.tags[0])] {
+            let p = s.as_ptr() as usize;
+            assert!(
+                (lo..hi).contains(&p),
+                "{label} was copied instead of borrowed"
+            );
+        }
+    }
+
+    #[test]
+    fn deserializes_into_owning_struct() {
+        let buf = sample();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+        let r: RowOwned = de::from_row(&v, 0).expect("row");
+        assert_eq!(r.name, "alpha");
+        assert_eq!(r.tags, vec!["x".to_string(), "y".into(), "z".into()]);
+    }
+
+    #[test]
+    fn unknown_fields_are_skipped() {
+        let buf = sample();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+        let r: RowPartial = de::from_row(&v, 0).expect("row");
+        assert_eq!(r, RowPartial { id: 1, score: -5 });
+    }
+
+    #[test]
+    fn out_of_range_row_is_an_error() {
+        let buf = sample();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+        assert!(de::from_row::<RowRef<'_>, _>(&v, 2).is_err());
+        assert!(de::from_row::<RowRef<'_>, _>(&v, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn from_all_reads_every_row() {
+        let buf = sample();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+        let rows: Vec<RowRef<'_>> = de::from_all(&v).expect("all");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "alpha");
+        assert_eq!(rows[1].city, "paris");
+    }
+
+    /// Round-trip the real corpus through JSON -> typed buffer -> structs
+    /// and check against serde_json.
+    #[test]
+    fn corpus_roundtrip_matches_serde_json() {
+        let json = corpus::records(1_000, 77);
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid");
+        let rows = parsed.as_array().expect("array");
+
+        let mut w = TypedWriter::<Record>::new();
+        for r in rows {
+            let tags: Vec<&str> = r["tags"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|t| t.as_str()).collect())
+                .unwrap_or_default();
+            w.record()
+                .u64(r["id"].as_u64().unwrap_or(0))
+                .u32(r["age"].as_u64().unwrap_or(0) as u32)
+                .bool(r["active"].as_bool().unwrap_or(false))
+                .i64(r["score"].as_i64().unwrap_or(0))
+                .str(r["name"].as_str().unwrap_or(""))
+                .str(r["city"].as_str().unwrap_or(""))
+                .str_list(tags);
+        }
+        let buf = w.finish();
+        let v = TypedView::<Record>::new(&buf).expect("valid");
+
+        let got: Vec<RowRef<'_>> = de::from_all(&v).expect("deserialize");
+        assert_eq!(got.len(), rows.len());
+        for (i, r) in rows.iter().enumerate() {
+            assert_eq!(got[i].id, r["id"].as_u64().unwrap_or(0), "id {i}");
+            assert_eq!(got[i].name, r["name"].as_str().unwrap_or(""), "name {i}");
+            assert_eq!(got[i].score, r["score"].as_i64().unwrap_or(0), "score {i}");
+            assert_eq!(got[i].active, r["active"].as_bool().unwrap_or(false), "active {i}");
+        }
+        // Silence the unused-import warning for the accessor trait.
+        let _ = v.name(0);
+        let _: Option<&dyn Fn()> = None;
+        fn _assert_trait_in_scope<'a>(v: &TypedView<'a, Record>) -> Option<&'a str> {
+            v.name(0)
+        }
+        let _ = _assert_trait_in_scope(&v);
+    }
+}

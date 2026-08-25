@@ -312,7 +312,11 @@ impl<T: FlatSchema> RecordWriter<'_, T> {
 ///
 /// Opening is O(1): header check plus a schema-id comparison. Field access
 /// is a load at a computed offset — no search, no decoding, no allocation.
-#[derive(Debug, Clone, Copy)]
+///
+/// `Clone`/`Copy` are implemented by hand: deriving them would add a
+/// `T: Copy` bound through the `PhantomData`, and a schema marker has no
+/// reason to be `Copy`.
+#[derive(Debug)]
 pub struct TypedView<'a, T: FlatSchema> {
     records: &'a [u8],
     offsets: &'a [u8],
@@ -320,6 +324,13 @@ pub struct TypedView<'a, T: FlatSchema> {
     count: usize,
     _marker: core::marker::PhantomData<fn() -> T>,
 }
+
+impl<T: FlatSchema> Clone for TypedView<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: FlatSchema> Copy for TypedView<'_, T> {}
 
 #[inline]
 fn rd_u16(b: &[u8], off: usize) -> Option<u16> {
@@ -672,4 +683,274 @@ macro_rules! flat_struct {
         fn $f(&self, i: usize) -> $crate::flat::typed::StrList<'a> { self.list_at(i, $i) }
         $crate::flat_struct!(@impl $i + 1usize; $($rest)*);
     };
+}
+
+// =====================================================================
+// serde bridge
+// =====================================================================
+
+/// Zero-copy `serde` deserialization from a typed buffer.
+///
+/// This is the piece that makes the format usable as *deserialization* and
+/// not just as an accessor API. Given
+///
+/// ```ignore
+/// #[derive(Deserialize)]
+/// struct Row<'a> { id: u64, name: &'a str }
+/// ```
+///
+/// a row can be filled with **no copying at all**: numbers come straight
+/// out of their slot and `&'a str` borrows the buffer's blob. There is no
+/// intermediate `Value`, no `String` allocation, and no parsing.
+///
+/// The serializing direction is deliberately absent. A writer must produce
+/// bytes, so it cannot be zero-copy by definition; [`TypedWriter`] is
+/// already the minimal form of it — one pass, one output buffer, interned
+/// strings.
+#[cfg(feature = "serde")]
+pub mod de {
+    use super::{FieldKind, FlatSchema, TypedView};
+    use serde::de::{
+        self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor,
+    };
+    use std::fmt;
+
+    /// Deserialisation failure.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Error(String);
+
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(&self.0)
+        }
+    }
+    impl std::error::Error for Error {}
+    impl de::Error for Error {
+        fn custom<T: fmt::Display>(msg: T) -> Self {
+            Error(msg.to_string())
+        }
+    }
+
+    type Result<T> = core::result::Result<T, Error>;
+
+    /// Deserialize record `i` of `view` into `T`.
+    pub fn from_row<'de, T, S>(view: &TypedView<'de, S>, i: usize) -> Result<T>
+    where
+        T: serde::Deserialize<'de>,
+        S: FlatSchema,
+    {
+        if i >= view.len() {
+            return Err(Error(format!("row {i} out of range ({} rows)", view.len())));
+        }
+        T::deserialize(RowDeserializer { view: *view, row: i })
+    }
+
+    /// Deserialize every record into a `Vec<T>`.
+    pub fn from_all<'de, T, S>(view: &TypedView<'de, S>) -> Result<Vec<T>>
+    where
+        T: serde::Deserialize<'de>,
+        S: FlatSchema,
+    {
+        (0..view.len()).map(|i| from_row(view, i)).collect()
+    }
+
+    /// One record, presented to serde as a map keyed by the schema's field
+    /// names.
+    #[derive(Debug)]
+    pub struct RowDeserializer<'de, S: FlatSchema> {
+        view: TypedView<'de, S>,
+        row: usize,
+    }
+
+    impl<S: FlatSchema> Clone for RowDeserializer<'_, S> {
+        fn clone(&self) -> Self {
+            *self
+        }
+    }
+    impl<S: FlatSchema> Copy for RowDeserializer<'_, S> {}
+
+    impl<'de, S: FlatSchema> de::Deserializer<'de> for RowDeserializer<'de, S> {
+        type Error = Error;
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_map(Fields {
+                view: self.view,
+                row: self.row,
+                field: 0,
+            })
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map struct enum identifier ignored_any
+        }
+    }
+
+    struct Fields<'de, S: FlatSchema> {
+        view: TypedView<'de, S>,
+        row: usize,
+        field: usize,
+    }
+
+    impl<'de, S: FlatSchema> MapAccess<'de> for Fields<'de, S> {
+        type Error = Error;
+
+        fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>> {
+            let Some(name) = S::NAMES.get(self.field) else {
+                return Ok(None);
+            };
+            // Field names are `&'static str`, so this borrows for `'de`.
+            seed.deserialize(BorrowedStr(name)).map(Some)
+        }
+
+        fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value> {
+            let f = self.field;
+            self.field += 1;
+            seed.deserialize(SlotDeserializer {
+                view: self.view,
+                row: self.row,
+                field: f,
+            })
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            Some(S::NAMES.len().saturating_sub(self.field))
+        }
+    }
+
+    /// One field's value.
+    #[derive(Debug)]
+    struct SlotDeserializer<'de, S: FlatSchema> {
+        view: TypedView<'de, S>,
+        row: usize,
+        field: usize,
+    }
+
+    impl<S: FlatSchema> Clone for SlotDeserializer<'_, S> {
+        fn clone(&self) -> Self {
+            *self
+        }
+    }
+    impl<S: FlatSchema> Copy for SlotDeserializer<'_, S> {}
+
+    impl<'de, S: FlatSchema> de::Deserializer<'de> for SlotDeserializer<'de, S> {
+        type Error = Error;
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            let kind = S::FIELDS
+                .get(self.field)
+                .copied()
+                .ok_or_else(|| Error("field index out of range".into()))?;
+
+            match kind {
+                // A 64-bit slot carries no signedness, so hand serde the
+                // widest signed form and let the target type narrow. `u64`
+                // targets still work because serde tries `visit_u64` on
+                // overflow-free values.
+                FieldKind::Scalar64 => {
+                    let v = self.view.slot(self.row, self.field).unwrap_or(0);
+                    visitor.visit_u64(v)
+                }
+                FieldKind::Str => {
+                    let s = self
+                        .view
+                        .str_at(self.row, self.field)
+                        .ok_or_else(|| Error("string field is not valid UTF-8".into()))?;
+                    // Borrowed for `'de`: this is the zero-copy path.
+                    visitor.visit_borrowed_str(s)
+                }
+                FieldKind::StrList => visitor.visit_seq(ListAccess {
+                    list: self.view.list_at(self.row, self.field),
+                    k: 0,
+                }),
+            }
+        }
+
+        /// `bool` needs the slot reinterpreted rather than widened.
+        fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_bool(self.view.slot(self.row, self.field).unwrap_or(0) != 0)
+        }
+
+        /// Signed targets: reinterpret the slot rather than clamp it, so
+        /// negative values survive.
+        fn deserialize_i64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_i64(self.view.slot(self.row, self.field).unwrap_or(0) as i64)
+        }
+        fn deserialize_i32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_i32(self.view.slot(self.row, self.field).unwrap_or(0) as i32)
+        }
+        fn deserialize_i16<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_i16(self.view.slot(self.row, self.field).unwrap_or(0) as i16)
+        }
+        fn deserialize_i8<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_i8(self.view.slot(self.row, self.field).unwrap_or(0) as i8)
+        }
+
+        /// Floats are stored as bits.
+        fn deserialize_f64<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_f64(f64::from_bits(
+                self.view.slot(self.row, self.field).unwrap_or(0),
+            ))
+        }
+        fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_f32(f64::from_bits(
+                self.view.slot(self.row, self.field).unwrap_or(0),
+            ) as f32)
+        }
+
+        serde::forward_to_deserialize_any! {
+            u8 u16 u32 u64 u128 i128 char str string bytes byte_buf option unit
+            unit_struct newtype_struct seq tuple tuple_struct map struct enum
+            identifier ignored_any
+        }
+    }
+
+    struct ListAccess<'de> {
+        list: super::StrList<'de>,
+        k: usize,
+    }
+
+    impl<'de> SeqAccess<'de> for ListAccess<'de> {
+        type Error = Error;
+
+        fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>> {
+            if self.k >= self.list.len() {
+                return Ok(None);
+            }
+            let s = self
+                .list
+                .get(self.k)
+                .ok_or_else(|| Error("list item is not valid UTF-8".into()))?;
+            self.k += 1;
+            seed.deserialize(BorrowedStr(s)).map(Some)
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            Some(self.list.len().saturating_sub(self.k))
+        }
+    }
+
+    /// A `&'de str` that keeps its lifetime through serde, so derived impls
+    /// can borrow rather than allocate.
+    struct BorrowedStr<'de>(&'de str);
+
+    impl<'de> de::Deserializer<'de> for BorrowedStr<'de> {
+        type Error = Error;
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+            visitor.visit_borrowed_str(self.0)
+        }
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map struct enum identifier ignored_any
+        }
+    }
+
+    impl<'de> IntoDeserializer<'de, Error> for BorrowedStr<'de> {
+        type Deserializer = Self;
+        fn into_deserializer(self) -> Self {
+            self
+        }
+    }
 }

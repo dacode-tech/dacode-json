@@ -276,6 +276,75 @@ ordering of work is:
 
 ---
 
+## 3b. Stage 2 measured directly, and one failed optimisation
+
+§3 inferred that Stage 2 must be the expensive half. `benches/stage2.rs`
+measures it, with the structural index pre-built and reused so only the
+builder is timed (1 MiB corpora):
+
+| corpus | Stage 1 | Stage 2 | Stage 2 share of total |
+|---|---|---|---|
+| records | 2.03 GiB/s | 1.18 GiB/s | **63%** |
+| int_array | 3.17 GiB/s | 678 MiB/s | **82%** |
+| strings | 2.16 GiB/s | 15.8 GiB/s | 12% |
+| geo_int | 1.99 GiB/s | 573 MiB/s | **78%** |
+| geo_float | 2.45 GiB/s | 867 MiB/s | **74%** |
+
+Confirmed: Stage 2 is 63–82% of parse time on everything except `strings`,
+where structural density is low and few nodes are produced.
+
+Within Stage 2 (`tools/profile.sh vela_stage2`):
+
+| share | function |
+|---|---|
+| 77.9% | `builder::build_from_index` — the walk loop |
+| 21.7% | `scalar::parse_scalar_fast` — number and literal parsing |
+
+### The optimisation that did not work
+
+The walk loop looked obviously wasteful: `byte_at(i)` internally calls
+`pos_at(i)`, so each iteration appeared to bounds-check `positions[i]`
+twice, and every lookahead re-read what the next iteration would read
+again. Restructuring to load `(pos, byte)` once and carry the lookahead
+forward should have removed roughly half the loads.
+
+It made things **slower** on every corpus:
+
+| corpus | before | after | |
+|---|---|---|---|
+| records | 1.1845 GiB/s | 1.0939 GiB/s | −7.6% |
+| int_array | 678.3 MiB/s | 655.5 MiB/s | −3.4% |
+| strings | 15.80 GiB/s | 14.52 GiB/s | −8.1% |
+| geo_int | 572.9 MiB/s | 549.4 MiB/s | −4.1% |
+| geo_float | 867.4 MiB/s | 857.1 MiB/s | −1.2% |
+
+LLVM was already eliminating the duplicate bounds checks — the two
+`positions.get(i)` calls have the same index and no intervening write, so
+CSE handles them. What the rewrite added was an `Option<(usize, u8)>`
+carried across the loop back-edge, which cost more than the (already
+absent) checks saved. Reverted.
+
+The lesson is the same one §1 taught about the classifier: reasoning about
+instruction counts predicts optimisation outcomes badly, and the only
+reliable move is to measure the change.
+
+### What is actually left
+
+`parse_scalar_fast` at 21.7% is the clearest remaining target, and it
+correlates with corpus shape — per-node throughput is 122M/s on `geo_float`
+and 296M/s on `strings`, tracking how many nodes need a number parsed. Its
+inner loop is one `acc * 10 + digit` per byte.
+
+The walk loop at 77.9% is harder. It runs once per *structural character*,
+not per node — 417 000 iterations to produce 173 000 nodes on `records` —
+and dispatches on a data-dependent byte each time. Making that cheaper
+means exploiting context: inside an object the sequence is
+`" … " : value , " … "`, which a specialised inner loop could walk with
+predictable branches instead of a general match. That is how yyjson's
+recursive descent stays ahead, and it is a rewrite rather than a tweak.
+
+---
+
 ## 4. What this suggests for Vela
 
 1. **Fix the extraction loop first.** 64–82% of Stage 1, and simdjson's

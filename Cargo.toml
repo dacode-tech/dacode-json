@@ -87,6 +87,10 @@ name = "zerocopy"
 harness = false
 
 [[bench]]
+name = "stage2"
+harness = false
+
+[[bench]]
 name = "tiers"
 harness = false
 

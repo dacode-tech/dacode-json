@@ -219,6 +219,46 @@ Against the dynamic layout: **2.2× smaller, 5.5× faster to read one field,
 eight bytes where `rkyv` packs it into one. Packing fields by size would
 close most of it and is the obvious next step.
 
+### Zero-copy deserialization into Rust structs
+
+Accessors are not the whole story — most code wants a struct. `flat::typed::de`
+is a `serde` `Deserializer` over `TypedView`, so a derived impl fills
+directly from the buffer:
+
+```rust
+#[derive(Deserialize)]
+struct Row<'a> {
+    id: u64,
+    #[serde(borrow)] name: &'a str,
+    #[serde(borrow)] tags: Vec<&'a str>,
+}
+
+let v = TypedView::<Record>::new(&buf)?;
+let rows: Vec<Row<'_>> = flat::typed::de::from_all(&v)?;
+```
+
+No intermediate `Value`, no `String` allocation, no parsing. `&'a str`
+fields point into the buffer's blob — verified by
+`tests/flat_typed.rs::borrowed_strings_point_into_the_buffer`, which checks
+the pointers land inside the original allocation.
+
+1 MiB `records`, deserializing all 10 700 rows into a borrowing struct:
+
+| | throughput |
+|---|---|
+| `jsonflat` typed + serde | **1.08 GiB/s** |
+| `sonic-rs` | 552 MiB/s |
+| `serde_json` | 413 MiB/s |
+
+2.0–2.6× faster, which is what removing the parse step is worth. This is not
+a like-for-like win: the others start from JSON text and this starts from a
+buffer somebody already built. It is the right comparison only if you
+control both ends and can store the buffer.
+
+**Serialization is deliberately not zero-copy, because it cannot be** — a
+writer has to produce bytes. [`TypedWriter`] is the minimal form: one pass,
+one output buffer, interned strings, no intermediate representation.
+
 ### Why this is a type and not a Cargo feature
 
 The natural-looking design is `#[cfg(feature = "schema")]`. It is a trap,

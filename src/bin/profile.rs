@@ -33,7 +33,7 @@ fn main() {
     let bytes = json.as_bytes();
 
     let workloads = [
-        "vela_scan", "vela_pool", "vela_strict", "vela_de", "vela_ser",
+        "vela_scan", "vela_stage2", "vela_pool", "vela_strict", "vela_de", "vela_ser",
         "serde_json_value", "serde_json_de", "serde_json_ser",
         "simd_json_tape", "sonic_de", "flat_encode", "flat_read",
         #[cfg(feature = "cbench")]
@@ -60,6 +60,20 @@ fn main() {
                 idx.clear();
                 vela_json::scan::scan_into(vela_json::Scanner::default(), bytes, &mut idx);
                 black_box(idx.len());
+            }
+        }
+        // Stage 2 alone: index pre-built and reused, so only the DOM
+        // builder is sampled.
+        "vela_stage2" => {
+            use vela_json::builder::{build_from_index, pool_capacity_for, Stack};
+            use vela_json::pool::Pool;
+            let si = vela_json::scan::scan(vela_json::Scanner::default(), bytes);
+            let mut pool = Pool::with_capacity(pool_capacity_for(si.len()));
+            let mut stack = Stack::new();
+            for _ in 0..iters {
+                pool.reset(bytes.len());
+                build_from_index(bytes, &si, &mut pool, &mut stack);
+                black_box(pool.len());
             }
         }
         "vela_pool" => {

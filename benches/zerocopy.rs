@@ -450,8 +450,68 @@ fn bench_encode(c: &mut Criterion) {
     group.finish();
 }
 
+/// Deserializing into Rust structs: the workload applications run.
+///
+/// `jsonflat_typed` reads from a pre-built buffer, so it is not parsing at
+/// all — the comparison shows what removing the parse step is worth when
+/// the destination is a struct rather than a DOM.
+fn bench_struct_de(c: &mut Criterion) {
+    use serde::Deserialize;
+    use vela_json::flat::typed::de as flat_de;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct RowRef<'a> {
+        id: u64,
+        age: u32,
+        active: bool,
+        score: i64,
+        #[serde(borrow)]
+        name: &'a str,
+        #[serde(borrow)]
+        city: &'a str,
+        #[serde(borrow)]
+        tags: Vec<&'a str>,
+    }
+
+    let json = corpus_json();
+    let records: Vec<Record> = serde_json::from_str(&json).expect("parse");
+    let typedbuf = encode_typed(&records);
+    let n = records.len();
+
+    let mut group = c.benchmark_group("zc_struct_de");
+    group.throughput(Throughput::Bytes(json.len() as u64));
+
+    group.bench_function("jsonflat_typed_borrowed", |b| {
+        b.iter(|| {
+            let v = TypedView::<FlatRecord>::new(black_box(&typedbuf)).expect("view");
+            let rows: Vec<RowRef<'_>> = flat_de::from_all(&v).expect("de");
+            debug_assert_eq!(rows.len(), n);
+            black_box(rows.len())
+        });
+    });
+
+    group.bench_function("serde_json_borrowed", |b| {
+        b.iter(|| {
+            let rows: Vec<RowRef<'_>> =
+                serde_json::from_slice(black_box(json.as_bytes())).expect("de");
+            black_box(rows.len())
+        });
+    });
+
+    group.bench_function("sonic_rs_borrowed", |b| {
+        b.iter(|| {
+            let rows: Vec<RowRef<'_>> =
+                sonic_rs::from_slice(black_box(json.as_bytes())).expect("de");
+            black_box(rows.len())
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
+    bench_struct_de,
     bench_open,
     bench_read_one,
     bench_read_all,

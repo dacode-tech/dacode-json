@@ -116,6 +116,16 @@ end-to-end**, because classification is off Stage 1's critical path.
 Replacing Vela's serial per-bit loop with simdjson's unconditional
 eight-slot write is worth +30-77%.
 
+**Zero-copy struct deserialization works and is 2.6× faster than
+`serde_json`** — 1.08 GiB/s vs 413 MiB/s, reading a pre-built `jsonflat`
+buffer into `#[derive(Deserialize)] struct Row<'a> { name: &'a str }` with
+no parsing and no copying. See [`docs/ZEROCOPY.md`](docs/ZEROCOPY.md).
+
+**Stage 2 is 63–82% of parse time**, not Stage 1 — measured directly in
+`benches/stage2.rs`. An obvious-looking optimisation of its walk loop made
+things 1–8% *slower*, because LLVM had already removed the redundant bounds
+checks. Recorded in [`docs/PROFILING.md`](docs/PROFILING.md) §3b.
+
 **A tape is the wrong shape for struct deserialization.** The same
 representation that beats simd-json by 3.5x on string-heavy DOM building
 loses to `serde_json` by 1.5x when filling a `#[derive(Deserialize)]`
@@ -213,7 +223,8 @@ tests/
   flat.rs                  roundtrip + 40k hostile buffers
   flat_typed.rs            schema layout, layout/schema confusion, fuzz
 benches/
-  tiers.rs  scan.rs  parse.rs  query.rs  structs.rs  zerocopy.rs
+  tiers.rs  scan.rs  stage2.rs  parse.rs  query.rs  structs.rs
+  zerocopy.rs  cbaseline.rs
 examples/
   typestate.rs   runnable unwrap-free demo
   sizes.rs       jsonflat buffer sizes
