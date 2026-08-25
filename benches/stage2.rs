@@ -147,6 +147,26 @@ fn bench_floor(c: &mut Criterion) {
         acc
     }
 
+    /// The ceiling for "pack the class into the index": dispatch from a
+    /// pre-computed 3-bit class with no access to the document at all.
+    #[inline(never)]
+    fn walk_preclassified(packed: &[u32]) -> usize {
+        let mut acc = 0usize;
+        for &w in packed {
+            acc += match w & 7 {
+                0 => 1,
+                1 => 2,
+                2 => 3,
+                3 => 4,
+                4 => 5,
+                5 => 6,
+                6 => 7,
+                _ => 8,
+            };
+        }
+        acc
+    }
+
     for (name, json) in corpus::suite(1 << 20, SEED) {
         let p = prepare(&json);
         let bytes = p.input.len();
@@ -154,12 +174,32 @@ fn bench_floor(c: &mut Criterion) {
 
         let input = p.input.clone();
         let pos = p.si.positions().to_vec();
+        // (position << 3) | class, as the packed index would store it.
+        let packed: Vec<u32> = pos
+            .iter()
+            .map(|&pp| {
+                let c = match input.get(pp as usize).copied().unwrap_or(0) {
+                    b'{' => 0u32,
+                    b'}' => 1,
+                    b'[' => 2,
+                    b']' => 3,
+                    b'"' => 4,
+                    b':' => 5,
+                    b',' => 6,
+                    _ => 7,
+                };
+                (pp << 3) | c
+            })
+            .collect();
 
         group.bench_with_input(BenchmarkId::new("positions_only", name), &name, |b, _| {
             b.iter(|| black_box(positions_only(black_box(&pos))));
         });
         group.bench_with_input(BenchmarkId::new("walk_dispatch", name), &name, |b, _| {
             b.iter(|| black_box(walk_only(black_box(&input), black_box(&pos))));
+        });
+        group.bench_with_input(BenchmarkId::new("walk_preclassified", name), &name, |b, _| {
+            b.iter(|| black_box(walk_preclassified(black_box(&packed))));
         });
         let mut q = prepare(&json);
         group.bench_with_input(BenchmarkId::new("real_builder", name), &name, |b, _| {

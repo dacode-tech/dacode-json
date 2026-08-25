@@ -387,6 +387,54 @@ So the two real targets, in order:
 
 Neither is the rewrite proposed in §3b. Both are smaller.
 
+### Target 2 was implemented, measured, and reverted
+
+Packing a 3-bit class into each index entry was implemented in full: Stage 1
+classifies each structural byte while extracting it (an L1-hot load, since
+the chunk was just streamed) and Stage 2 dispatches on the packed class,
+never touching the document. All 201 tests passed, so the semantics were
+right. The performance was not:
+
+| corpus | Stage 1 before | after | Stage 2 before | after |
+|---|---|---|---|---|
+| records | 2.03 GiB/s | **834 MiB/s** | 1.18 GiB/s | 1.23 GiB/s |
+| int_array | 3.17 GiB/s | 2.52 GiB/s | 678 MiB/s | 675 MiB/s |
+| strings | 2.16 GiB/s | 1.94 GiB/s | 15.8 GiB/s | 17.7 GiB/s |
+| geo_int | 1.99 GiB/s | **839 MiB/s** | 573 MiB/s | 554 MiB/s |
+| geo_float | 2.45 GiB/s | 1.69 GiB/s | 867 MiB/s | 852 MiB/s |
+
+Stage 1 lost 10–59%. Stage 2 gained **4% at best and regressed on three of
+five corpora** — against a floor benchmark that predicted the dispatch would
+go from 1.74 GiB/s to 30 GiB/s. Reverted.
+
+### Why the floor benchmark was misleading
+
+This is the more valuable result than the optimisation would have been.
+
+`walk_dispatch` runs at 1.74 GiB/s on `records`: 417 000 scattered loads in
+596 µs, about 5 cycles each — L2 latency, pipelined. `positions_only`, with
+no load at all, runs at 30 GiB/s. The difference looked like 596 µs of pure
+load cost sitting inside a builder that takes 845 µs.
+
+It was not. In the real builder those loads are **hidden by
+out-of-order execution** — there is enough independent work per iteration
+(pool writes, stack updates, scalar parsing) that the load latency overlaps
+with it and costs almost nothing. `walk_dispatch` measures the loads with
+*nothing to hide them behind*, so it reports their latency rather than their
+cost.
+
+**An isolated microbenchmark measures an operation's latency; the real loop
+pays its throughput cost, which out-of-order execution can hide entirely.**
+The floor number was a valid upper bound on the dispatch loop in isolation
+and a bad predictor of the gain from removing it.
+
+That is now three optimisations in this project predicted by local reasoning
+or isolated measurement and refuted by end-to-end measurement: the
+lookup-table classifier (§1), the walk-loop restructure (§3b), and this one.
+The only two that worked — the unrolled bit extractor and the hybrid
+classifier — were also the only two proposed *after* a phase decomposition
+of the full pipeline rather than a microbenchmark of a part.
+
 ### What is actually left
 
 `parse_scalar_fast` at 21.7% is the clearest remaining target, and it
