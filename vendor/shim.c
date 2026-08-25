@@ -178,3 +178,21 @@ size_t vj_yy_roundtrip(const char *dat, size_t len) {
 /* ---- version --------------------------------------------------------- */
 
 const char *vj_yy_version(void) { return YYJSON_VERSION_STRING; }
+
+/* ---- parse and retain, for memory measurement ------------------------ */
+
+/* Parse and KEEP the document, so the caller can measure what the parsed
+ * form occupies. Returns an opaque handle; pass it to vj_yy_doc_free. */
+void *vj_yy_parse_keep(const char *dat, size_t len) {
+    return (void *)yyjson_read(dat, len, 0);
+}
+
+void vj_yy_doc_free(void *doc) {
+    if (doc) yyjson_doc_free((yyjson_doc *)doc);
+}
+
+/* Value count of a retained doc, so the handle is not opaque-useless. */
+size_t vj_yy_doc_vals(void *doc) {
+    if (!doc) return 0;
+    return yyjson_doc_get_val_count((yyjson_doc *)doc);
+}

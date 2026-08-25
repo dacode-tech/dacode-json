@@ -222,6 +222,58 @@ everything falls to the scalar tail.
 Nothing left to optimise: the reader has been inlined into the caller's loop
 and the remaining cost is the loop itself.
 
+### The C libraries
+
+Both are compiled into the profiling binary by `build.rs` and statically
+linked, so `nm` resolves their symbols and the same tooling works.
+
+**yyjson** — `tools/profile.sh yyjson`
+
+| share | function |
+|---|---|
+| **93.6%** | `yyjson_read_opts` |
+| 5.3% | libsystem_platform (memcpy/memset) |
+
+One function, everything inlined into it. There is no phase structure to
+attribute — yyjson is a single tight recursive-descent loop writing 16-byte
+values into a pool. That is the design tier 3 copied, and the profile shows
+what "copied well" would look like.
+
+**simdjson DOM** — `tools/profile.sh simdjson_dom`
+
+| share | function |
+|---|---|
+| 48.5% | `arm64::dom_parser_implementation::stage2` |
+| 37.1% | `arm64::dom_parser_implementation::stage1` |
+| 13.4% | outlined helpers |
+
+**simdjson On Demand** — `tools/profile.sh simdjson_ondemand`
+
+| share | function |
+|---|---|
+| 52.2% | the field-summing shim (On Demand value extraction, inlined) |
+| 43.3% | `arm64::dom_parser_implementation::stage1` |
+
+### The most useful comparison in this document
+
+simdjson spends **37–43% of its time in Stage 1**. This port spends
+**13–25%** (§2). Same two-stage architecture, very different balance.
+
+That is not a compliment to the port — it means the port's Stage 2 is
+proportionally *more* expensive than simdjson's, and by a wide margin.
+simdjson's Stage 1 is doing more work per byte (it validates UTF-8 and the
+document structure, which this port's faithful mode does not) and still
+takes a larger share, because its Stage 2 is so much cheaper.
+
+Combined with §2's finding that position extraction dominates Stage 1, the
+ordering of work is:
+
+1. Stage 2 / DOM building — the largest absolute cost, and the largest gap
+   to yyjson and simdjson.
+2. Position extraction inside Stage 1 — 64–82% of Stage 1, already improved
+   30–77% here.
+3. Classification — 13–25% of Stage 1. The thing the design docs asked for.
+
 ---
 
 ## 4. What this suggests for Vela
@@ -240,3 +292,12 @@ and the remaining cost is the loop itself.
 5. **For struct deserialization, a DOM is a structural disadvantage.**
    `serde_json` never materialises one and stays ahead of the pool despite
    spending 22% of its time on UTF-8 validation.
+
+6. **Stage 2 is the real target.** simdjson spends 37–43% of its time in
+   Stage 1 against this port's 13–25%, which means the port's Stage 2 is
+   proportionally far more expensive. Optimising Stage 1 further has little
+   headroom left; the DOM builder has a lot.
+
+7. **Memory is a separate axis and tier 1 wins it outright** — 64 KiB to
+   navigate a 10 MiB document, against 37.5 MiB for yyjson and 43.4 MiB for
+   tier 3. See `docs/MEMORY.md`.

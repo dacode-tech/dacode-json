@@ -15,7 +15,7 @@ W="${1:-list}"
 N="${2:-200}"
 BIN=./target/release/profile
 
-cargo build --release --features profiling --bin profile >/dev/null 2>&1
+cargo build --release --features "profiling cbench" --bin profile >/dev/null 2>&1
 
 if [ "$W" = "list" ]; then exec "$BIN" list; fi
 

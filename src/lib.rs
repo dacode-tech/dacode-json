@@ -84,6 +84,7 @@
 pub mod cbench;
 pub mod builder;
 pub mod corpus;
+pub mod memstat;
 pub mod flat;
 #[cfg(feature = "serde")]
 pub mod de;

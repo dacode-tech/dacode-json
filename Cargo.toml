@@ -22,6 +22,11 @@ name = "profile"
 path = "src/bin/profile.rs"
 required-features = ["profiling"]
 
+[[bin]]
+name = "memprofile"
+path = "src/bin/memprofile.rs"
+required-features = ["profiling"]
+
 [build-dependencies]
 cc = "1"
 

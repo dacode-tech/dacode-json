@@ -20,7 +20,9 @@ pointing at.
 |---|---|
 | **[`docs/TIERS.md`](docs/TIERS.md)** | all four Vela tiers head-to-head; which should be the default |
 | **[`docs/RESULTS.md`](docs/RESULTS.md)** | all benchmarks, methodology, caveats, bugs found |
-| **[`docs/PROFILING.md`](docs/PROFILING.md)** | where every parser spends its time; how to reproduce |
+| **[`docs/PROFILING.md`](docs/PROFILING.md)** | CPU hot paths for every implementation incl. yyjson/simdjson |
+| **[`docs/MEMORY.md`](docs/MEMORY.md)** | peak RSS and allocation counts across all implementations |
+| **[`docs/CBASELINE.md`](docs/CBASELINE.md)** | the port vs yyjson and simdjson, built from vendored source |
 | **[`docs/ZEROCOPY.md`](docs/ZEROCOPY.md)** | a YaFF-style zero-copy wire format for JSON |
 | **[`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md)** | panic-free design study |
 
@@ -216,7 +218,9 @@ examples/
   typestate.rs   runnable unwrap-free demo
   sizes.rs       jsonflat buffer sizes
 tools/
-  profile.sh  symbolicate.py
+  profile.sh  symbolicate.py     CPU profiling with symbols
+  memprofile.sh                  memory matrix, one process per impl
+  cbench.sh                      isolated cross-language benchmarks
 ```
 
 ## Running
@@ -232,7 +236,11 @@ cargo bench --bench zerocopy        # jsonflat vs rkyv vs re-parsing
 cargo clippy --lib                  # enforces panic freedom
 cargo run --example typestate
 cargo run --release --example sizes
-tools/profile.sh vela_de 200        # sampling profile with symbols
+tools/profile.sh vela_de 200        # CPU profile with symbols
+tools/profile.sh yyjson 200         # ...including the C baselines
+tools/memprofile.sh records 10485760   # memory matrix
+./target/release/memprofile selftest   # calibrate the memory instrument
+tools/cbench.sh c_parse_10mb        # isolated cross-language benchmark
 ```
 
 Toolchain: `rustc 1.95.0`. Nothing depends on a feature newer than 1.61.

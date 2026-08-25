@@ -39,6 +39,9 @@ extern "C" {
     fn vj_yy_validate(dat: *const c_char, len: usize) -> c_int;
     fn vj_yy_roundtrip(dat: *const c_char, len: usize) -> usize;
     fn vj_yy_version() -> *const c_char;
+    fn vj_yy_parse_keep(dat: *const c_char, len: usize) -> *mut core::ffi::c_void;
+    fn vj_yy_doc_free(doc: *mut core::ffi::c_void);
+    fn vj_yy_doc_vals(doc: *mut core::ffi::c_void) -> usize;
 
     fn vj_sj_parse_dom(dat: *const c_char, len: usize, cap: usize) -> usize;
     fn vj_sj_parse_ondemand(dat: *const c_char, len: usize, cap: usize) -> usize;
@@ -216,6 +219,46 @@ impl YyJson {
         unsafe { vj_yy_roundtrip(input.as_ptr().cast(), input.len()) }
     }
 }
+
+/// A parsed yyjson document, kept alive.
+///
+/// Exists so the memory a parsed document occupies can be measured; the
+/// timing shims free immediately.
+#[derive(Debug)]
+pub struct YyDoc {
+    raw: *mut core::ffi::c_void,
+}
+
+impl YyDoc {
+    /// Parse and retain.
+    #[must_use]
+    pub fn parse(input: &[u8]) -> Option<Self> {
+        // SAFETY: `input` is a valid slice; yyjson copies what it needs.
+        let raw = unsafe { vj_yy_parse_keep(input.as_ptr().cast(), input.len()) };
+        if raw.is_null() {
+            None
+        } else {
+            Some(YyDoc { raw })
+        }
+    }
+
+    /// Number of values in the document.
+    #[must_use]
+    pub fn value_count(&self) -> usize {
+        // SAFETY: `raw` is a live doc from `vj_yy_parse_keep`.
+        unsafe { vj_yy_doc_vals(self.raw) }
+    }
+}
+
+impl Drop for YyDoc {
+    fn drop(&mut self) {
+        // SAFETY: freed exactly once, from `vj_yy_parse_keep`.
+        unsafe { vj_yy_doc_free(self.raw) };
+    }
+}
+
+// SAFETY: the document is owned exclusively by this handle.
+unsafe impl Send for YyDoc {}
 
 /// A reusable yyjson allocator pool — the closest analogue to
 /// [`crate::Workspace`].

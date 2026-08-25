@@ -36,6 +36,14 @@ fn main() {
         "vela_scan", "vela_pool", "vela_strict", "vela_de", "vela_ser",
         "serde_json_value", "serde_json_de", "serde_json_ser",
         "simd_json_tape", "sonic_de", "flat_encode", "flat_read",
+        #[cfg(feature = "cbench")]
+        "yyjson", 
+        #[cfg(feature = "cbench")]
+        "yyjson_sum",
+        #[cfg(feature = "cbench")]
+        "simdjson_dom",
+        #[cfg(feature = "cbench")]
+        "simdjson_ondemand",
     ];
 
     if workload == "list" {
@@ -135,6 +143,36 @@ fn main() {
                 black_box(sum);
             }
         }
+        // The C baselines. Their symbols resolve because both libraries are
+        // compiled into this binary by build.rs and statically linked, so
+        // `nm` on the executable sees them.
+        #[cfg(feature = "cbench")]
+        "yyjson" => {
+            for _ in 0..iters {
+                black_box(vela_json::cbench::YyJson::parse(bytes));
+            }
+        }
+        #[cfg(feature = "cbench")]
+        "yyjson_sum" => {
+            for _ in 0..iters {
+                black_box(vela_json::cbench::YyJson::sum_field(bytes, "score"));
+            }
+        }
+        #[cfg(feature = "cbench")]
+        "simdjson_dom" => {
+            let p = vela_json::cbench::Padded::new(bytes);
+            for _ in 0..iters {
+                black_box(vela_json::cbench::SimdJson::parse_dom(&p));
+            }
+        }
+        #[cfg(feature = "cbench")]
+        "simdjson_ondemand" => {
+            let p = vela_json::cbench::Padded::new(bytes);
+            for _ in 0..iters {
+                black_box(vela_json::cbench::SimdJson::sum_field(&p, "score"));
+            }
+        }
+
         other => {
             eprintln!("unknown workload {other:?}; try: {}", workloads.join(", "));
             std::process::exit(2);
