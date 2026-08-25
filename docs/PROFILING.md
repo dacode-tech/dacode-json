@@ -435,6 +435,50 @@ The only two that worked — the unrolled bit extractor and the hybrid
 classifier — were also the only two proposed *after* a phase decomposition
 of the full pipeline rather than a microbenchmark of a part.
 
+### The two-pass hypothesis, tested and rejected
+
+The remaining explanation for the 1.36x gap to yyjson was architectural:
+yyjson reads the document once, the indexed path reads it twice (Stage 1
+sequentially, Stage 2 at scattered structural offsets). For a two-stage
+parser to match a single-pass one, *each* stage must run at roughly twice
+its throughput — and Stage 2 manages only 0.57–1.2 GiB/s.
+
+Vela already had the counter-design: `tier3/parse_onepass.vl`, task D1, a
+single-pass byte state machine with no index. It is now ported
+(`src/onepass.rs`) and produces a **byte-identical pool** — verified
+against the indexed builder on every corpus, 20 000 random documents and
+Vela's own `t848` shapes (`tests/onepass.rs`).
+
+It is slower on every corpus:
+
+| corpus | indexed (Stage 1 + 2) | single-pass | |
+|---|---|---|---|
+| records | 780 MiB/s | 666 MiB/s | −15% |
+| int_array | 562 MiB/s | 425 MiB/s | −24% |
+| strings | **1.85 GiB/s** | 978 MiB/s | **−47%** |
+| geo_int | 450 MiB/s | 379 MiB/s | −16% |
+| geo_float | 655 MiB/s | 526 MiB/s | −20% |
+
+**Reading the document twice is cheaper than reading it once badly.** Stage
+1 is a vector scan at 2.0–3.2 GiB/s; it finds all the structure in one
+pass over sequential memory with 16 bytes per instruction. A single-pass
+parser has to find that same structure a byte at a time, interleaved with
+building the DOM. The second pass costs less than the vectorisation saves.
+
+The gap is widest on `strings` (−47%), which is exactly where a vector scan
+should dominate a byte loop — long runs with nothing structural in them.
+
+**Caveat.** This port's `skip_ws` and `skip_string` are scalar byte loops.
+Vela's runtime versions (`json_pool_write.ll:460`, `:526`) are SIMD, so a
+fully vectorised single-pass parser would land somewhere above 666 MiB/s.
+It is unlikely to reach 780: it would still be doing Stage 1's work without
+Stage 1's advantage of scanning uninterrupted by DOM construction.
+
+So the two-stage architecture is **not** the source of the yyjson gap.
+simdjson uses the same architecture and beats yyjson with it. Whatever
+yyjson's advantage is, it is in the quality of its single tight loop, not
+in the pass count.
+
 ### What is actually left
 
 `parse_scalar_fast` at 21.7% is the clearest remaining target, and it
@@ -469,10 +513,14 @@ recursive descent stays ahead, and it is a rewrite rather than a tweak.
    `serde_json` never materialises one and stays ahead of the pool despite
    spending 22% of its time on UTF-8 validation.
 
-6. **Stage 2 is the real target.** simdjson spends 37–43% of its time in
-   Stage 1 against this port's 13–25%, which means the port's Stage 2 is
-   proportionally far more expensive. Optimising Stage 1 further has little
-   headroom left; the DOM builder has a lot.
+6. **Stage 2 is the real target, but not for the reasons first supposed.**
+   simdjson spends 37–43% of its time in Stage 1 against this port's
+   13–25%. Three attempts to close the gap failed (§3b) and the two-pass
+   architecture was tested and exonerated. What remains untried and
+   well-supported is number parsing: `parse_scalar_fast` is 21.7% of
+   Stage 2, and the corpora with the most headroom against the floor —
+   `int_array` 7.3x, `geo_float` 4.0x — are precisely the number-dense
+   ones.
 
 7. **Memory is a separate axis and tier 1 wins it outright** — 64 KiB to
    navigate a 10 MiB document, against 37.5 MiB for yyjson and 43.4 MiB for

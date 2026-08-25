@@ -90,6 +90,7 @@ pub mod flat;
 pub mod de;
 #[cfg(feature = "serde")]
 pub mod ser;
+pub mod onepass;
 pub mod pool;
 pub mod query;
 pub mod scalar;

@@ -200,7 +200,8 @@ src/
     neon.rs      AArch64 compare classifier
     table.rs     the lookup tables Vela specified but never built
   scalar.rs      __json_parse_scalar_fast, quirks intact
-  builder.rs     Stage 2 state machine
+  builder.rs     Stage 2 state machine (index-fed)
+  onepass.rs     single-pass builder, no index (tier3/parse_onepass.vl)
   query.rs       Doc / Value / entries / elements / skip_subtree
   unescape.rs    correct decoder + Vela's lossy one, for comparison
   workspace.rs   reusable arena
@@ -214,6 +215,7 @@ src/
   bin/profile.rs profiling workloads
 tests/
   tier_contract.rs         all four tiers vs each other and serde_json
+  onepass.rs               single-pass == indexed, byte for byte
   scanner_equivalence.rs   Stage 1 oracle tests (port of t859 + fuzz)
   classifier.rs            all 256 bytes, all 9 scanners
   faithful_semantics.rs    quirks pinned + panic freedom

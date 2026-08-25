@@ -210,5 +210,45 @@ fn bench_floor(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_floor, bench_stage2, bench_split);
+/// One pass versus two: the whole point of porting `parse_onepass.vl`.
+///
+/// `indexed_full` is Stage 1 + Stage 2 with all buffers reused — the
+/// fastest form of the two-stage path. `onepass` reads the document once.
+/// Both produce a byte-identical pool (`tests/onepass.rs`).
+fn bench_onepass(c: &mut Criterion) {
+    use vela_json::{onepass::OnePass, Workspace};
+
+    #[inline(never)]
+    fn w_indexed(ws: &mut Workspace, src: &[u8]) -> usize {
+        ws.parse(src).pool().len()
+    }
+    #[inline(never)]
+    fn w_onepass(p: &mut OnePass, src: &[u8]) -> usize {
+        p.parse(src).pool().len()
+    }
+
+    let mut group = c.benchmark_group("onepass_vs_indexed");
+    group.sample_size(50);
+
+    for (name, json) in corpus::suite(1 << 20, SEED) {
+        let src = json.as_bytes();
+        group.throughput(Throughput::Bytes(src.len() as u64));
+
+        let mut ws = Workspace::with_capacity(src.len());
+        let _ = ws.parse(src);
+        group.bench_with_input(BenchmarkId::new("indexed_full", name), &name, |b, _| {
+            b.iter(|| black_box(w_indexed(&mut ws, black_box(src))));
+        });
+
+        let mut op = OnePass::with_capacity(src.len());
+        let _ = op.parse(src);
+        group.bench_with_input(BenchmarkId::new("onepass", name), &name, |b, _| {
+            b.iter(|| black_box(w_onepass(&mut op, black_box(src))));
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_onepass, bench_floor, bench_stage2, bench_split);
 criterion_main!(benches);
