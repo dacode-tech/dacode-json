@@ -248,7 +248,9 @@ fn values_match(a: &serde_json::Value, b: &serde_json::Value) -> bool {
             }
             match (x.as_f64(), y.as_f64()) {
                 (Some(x), Some(y)) => {
-                    let ulps = (x.to_bits() as i64).wrapping_sub(y.to_bits() as i64).abs();
+                    // `.abs()` panics on i64::MIN, which two far-apart bit patterns
+                    // can produce. `unsigned_abs` is total.
+                    let ulps = (x.to_bits() as i64).wrapping_sub(y.to_bits() as i64).unsigned_abs();
                     ulps <= 1
                 }
                 _ => false,

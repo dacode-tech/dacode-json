@@ -82,6 +82,8 @@
 
 #[cfg(feature = "cbench")]
 pub mod cbench;
+#[cfg(feature = "profiling")]
+pub mod fuzz;
 pub mod builder;
 pub mod corpus;
 pub mod memstat;

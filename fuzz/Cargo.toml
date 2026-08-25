@@ -1,0 +1,39 @@
+[package]
+name = "vela-json-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+
+[dependencies.vela-json]
+path = ".."
+features = ["fuzzing"]
+
+# Keep the harness out of the workspace so `cargo test` at the root does not
+# try to build it without nightly.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "flat_view"
+path = "fuzz_targets/flat_view.rs"
+test = false
+doc = false

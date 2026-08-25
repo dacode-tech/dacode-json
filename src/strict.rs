@@ -426,6 +426,20 @@ impl State<'_> {
             }
         }
 
+        // Negative zero. RFC 8259 has one number type, so `-0` could be
+        // reported as the integer 0 — but that discards the sign, and
+        // `serde_json` keeps it by making the value `-0.0`. Matching that
+        // preserves round-tripping: emitting `0` for an input of `-0`
+        // changes the document.
+        //
+        // Note this cannot be caught by comparing values numerically:
+        // `0.0 == -0.0` is true in IEEE 754. It took the `y_number_minus_zero`
+        // case from JSONTestSuite to surface it.
+        if neg && acc == 0 && !is_float {
+            self.pool.push(Type::Float, 0, (-0.0f64).to_bits());
+            return Ok(p);
+        }
+
         if !is_float {
             // 18 digits always fit (10^18 < i64::MAX). 19 might. 20+ never
             // do, and `acc` may already have wrapped, so check the digit

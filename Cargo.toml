@@ -23,6 +23,11 @@ path = "src/bin/profile.rs"
 required-features = ["profiling"]
 
 [[bin]]
+name = "fuzz"
+path = "src/bin/fuzz.rs"
+required-features = ["profiling"]
+
+[[bin]]
 name = "memprofile"
 path = "src/bin/memprofile.rs"
 required-features = ["profiling"]
@@ -49,6 +54,9 @@ profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 # Compiles the vendored yyjson (C) and simdjson (C++) baselines. Off by
 # default: simdjson's amalgamation is 2.7 MB of C++17 and takes ~30s.
 cbench = []
+# Differential fuzzing harness (src/fuzz.rs). Needs serde_json to compare
+# against, so it rides on the `profiling` feature's dependency set.
+fuzzing = ["profiling"]
 
 [profile.release]
 opt-level = 3

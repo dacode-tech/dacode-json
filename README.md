@@ -19,6 +19,7 @@ pointing at.
 | document | what is in it |
 |---|---|
 | **[`docs/TIERS.md`](docs/TIERS.md)** | all four Vela tiers head-to-head; which should be the default |
+| **[`fuzz/README.md`](fuzz/README.md)** | the two fuzzing harnesses and what they check |
 | **[`docs/RESULTS.md`](docs/RESULTS.md)** | all benchmarks, methodology, caveats, bugs found |
 | **[`docs/PROFILING.md`](docs/PROFILING.md)** | CPU hot paths for every implementation incl. yyjson/simdjson |
 | **[`docs/MEMORY.md`](docs/MEMORY.md)** | peak RSS and allocation counts across all implementations |
@@ -219,7 +220,9 @@ tests/
   scanner_equivalence.rs   Stage 1 oracle tests (port of t859 + fuzz)
   classifier.rs            all 256 bytes, all 9 scanners
   faithful_semantics.rs    quirks pinned + panic freedom
-  strict_conformance.rs    JSONTestSuite-style + serde_json differential
+  conformance_suite.rs     JSONTestSuite + JSON_checker, vendored in testdata/
+  strict_conformance.rs    hand-written cases + serde_json differential
+  fuzz_bounded.rs          CI slice of the mutation fuzzer
   serde_de.rs              deserializer vs serde_json
   serde_ser.rs             serializer, byte-identical to serde_json
   flat.rs                  roundtrip + 40k hostile buffers
@@ -230,6 +233,8 @@ benches/
 examples/
   typestate.rs   runnable unwrap-free demo
   sizes.rs       jsonflat buffer sizes
+testdata/                        JSONTestSuite, JSON_checker, number edge cases
+fuzz/                            libFuzzer targets (nightly)
 tools/
   profile.sh  symbolicate.py     CPU profiling with symbols
   memprofile.sh                  memory matrix, one process per impl
@@ -239,7 +244,9 @@ tools/
 ## Running
 
 ```bash
-cargo test                          # 173 tests
+cargo test                          # 226 tests
+cargo test --features fuzzing       # + the bounded fuzzer
+cargo run --release --features fuzzing --bin fuzz   # mutation fuzzer
 cargo bench --bench tiers           # all four Vela tiers head-to-head
 cargo bench --bench scan            # classifiers, phase breakdown, scanners
 cargo bench --bench parse           # DOM parse vs the field

@@ -33,7 +33,7 @@ fn same(r: flat::Ref<'_>, j: &serde_json::Value) -> Result<(), String> {
                 // correctly rounded, ours is. See
                 // `serde_de.rs::float_precision_beats_serde_json_default`.
                 (Some(a), Some(b)) => {
-                    let ulps = (a.to_bits() as i64).wrapping_sub(b.to_bits() as i64).abs();
+                    let ulps = (a.to_bits() as i64).wrapping_sub(b.to_bits() as i64).unsigned_abs();
                     if ulps <= 1 {
                         Ok(())
                     } else {
