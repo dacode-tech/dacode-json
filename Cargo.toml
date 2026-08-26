@@ -9,6 +9,22 @@ license = "Apache-2.0"
 keywords = ["json", "serde", "parser", "zero-copy", "simd"]
 categories = ["encoding", "parser-implementations"]
 readme = "README.md"
+# `vendor/` (11 MB of C/C++ baselines) and `testdata/` (4.2 MB of
+# conformance corpora) are development-only: excluding them takes the
+# published crate from 14.1 MB to well under one. Both are in the git
+# repository; `cbench` and the conformance suite need a checkout.
+exclude = [
+    "vendor/",
+    "testdata/",
+    "fuzz/",
+    "tools/",
+    "docs/",
+    "benches/",
+    "tests/",
+    "corpus/",
+    ".agents/",
+    ".claude/",
+]
 
 [dependencies]
 serde = { version = "1", optional = true }

@@ -17,6 +17,19 @@ fn main() {
         return;
     }
 
+    // `vendor/` is excluded from the published crate: it is 11 MB of C and
+    // C++ that only the baseline benchmarks need, and shipping it would
+    // make every consumer download it. Fail with an explanation rather
+    // than a wall of "no such file" from the C compiler.
+    if !std::path::Path::new("vendor/yyjson/yyjson.c").exists() {
+        println!(
+            "cargo:warning=the `cbench` feature needs the vendored yyjson \
+             and simdjson sources, which are not shipped in the published \
+             crate. Clone the repository to run the C baselines."
+        );
+        return;
+    }
+
     // --- yyjson (C99) ---
     //
     // Built with the same optimisation settings yyjson's own CMake release

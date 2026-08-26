@@ -405,9 +405,18 @@ validation and correctly-rounded numbers added.
 
 ---
 
+## What is in the published crate
+
+`vendor/` (11 MB of C/C++ baselines) and `testdata/` (4.2 MB of conformance
+corpora) are development-only and are excluded, which takes the package from
+14.1 MB to 125 KB compressed. Clone the repository to run the conformance
+suite, the fuzzers, or the C baselines — with `--features cbench` the build
+script says so rather than failing in the C compiler.
+
 ## Licence
 
-Apache-2.0. Vendored test data and benchmark baselines keep their own
-licences; see `testdata/README.md` and `vendor/README.md`.
+Apache-2.0, see [`LICENSE`](LICENSE). Vendored test data and benchmark
+baselines keep their own licences; see `testdata/README.md` and
+`vendor/README.md`.
 
 Built by [Dacode Tech](https://dacode.tech), Romania.
