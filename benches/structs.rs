@@ -16,9 +16,9 @@ use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criteri
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::hint::black_box;
-use vela_json::corpus;
-use vela_json::strict::StrictParser;
-use vela_json::{de, ser};
+use dacodec::corpus;
+use dacodec::strict::StrictParser;
+use dacodec::{de, ser};
 
 const SEED: u64 = 0x57;
 

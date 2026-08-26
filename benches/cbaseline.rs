@@ -37,10 +37,10 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
-use vela_json::cbench::{Padded, SimdJson, YyJson, YyPool};
-use vela_json::corpus;
-use vela_json::strict::StrictParser;
-use vela_json::Workspace;
+use dacodec::cbench::{Padded, SimdJson, YyJson, YyPool};
+use dacodec::corpus;
+use dacodec::strict::StrictParser;
+use dacodec::Workspace;
 
 const SEED: u64 = 0x2C0;
 
@@ -322,10 +322,10 @@ fn bench_extract_all(c: &mut Criterion) {
                 for (k, v) in rec.entries() {
                     acc += k.len();
                     acc += match v.typ() {
-                        vela_json::Type::String => v.as_str().map_or(0, |s| s.len()),
-                        vela_json::Type::Number => v.as_i64().unwrap_or(0) as usize,
-                        vela_json::Type::Bool => usize::from(v.as_bool() == Some(true)),
-                        vela_json::Type::Array => v.elements().count(),
+                        dacodec::Type::String => v.as_str().map_or(0, |s| s.len()),
+                        dacodec::Type::Number => v.as_i64().unwrap_or(0) as usize,
+                        dacodec::Type::Bool => usize::from(v.as_bool() == Some(true)),
+                        dacodec::Type::Array => v.elements().count(),
                         _ => 0,
                     };
                 }
@@ -380,10 +380,10 @@ fn bench_first_field(c: &mut Criterion) {
 
     // For scale: the zero-copy format from docs/ZEROCOPY.md.
     let mut p = StrictParser::new();
-    let flatbuf = vela_json::flat::encode(p.parse(src).expect("valid")).expect("encode");
+    let flatbuf = dacodec::flat::encode(p.parse(src).expect("valid")).expect("encode");
     group.bench_function("jsonflat", |b| {
         b.iter(|| {
-            let v = vela_json::flat::View::new(black_box(&flatbuf)).expect("view");
+            let v = dacodec::flat::View::new(black_box(&flatbuf)).expect("view");
             black_box(
                 v.root()
                     .at(0)
@@ -458,9 +458,9 @@ fn bench_roundtrip(c: &mut Criterion) {
     let mut out = Vec::with_capacity(src.len() + 64);
     group.bench_function("vela_strict_serde", |b| {
         b.iter(|| {
-            let v: Vec<Record> = vela_json::de::from_slice(black_box(src)).expect("de");
+            let v: Vec<Record> = dacodec::de::from_slice(black_box(src)).expect("de");
             out.clear();
-            vela_json::ser::to_writer(&mut out, &v).expect("ser");
+            dacodec::ser::to_writer(&mut out, &v).expect("ser");
             black_box(out.len())
         });
     });

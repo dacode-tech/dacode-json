@@ -8,10 +8,10 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
-use vela_json::builder::{build_from_index, pool_capacity_for, Stack};
-use vela_json::corpus;
-use vela_json::pool::Pool;
-use vela_json::scan::{scan, Scanner, StructuralIndex};
+use dacodec::builder::{build_from_index, pool_capacity_for, Stack};
+use dacodec::corpus;
+use dacodec::pool::Pool;
+use dacodec::scan::{scan, Scanner, StructuralIndex};
 
 const SEED: u64 = 0x5CA7;
 
@@ -87,7 +87,7 @@ fn bench_split(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("stage1_scan", name), &name, |b, _| {
             b.iter(|| {
                 idx.clear();
-                vela_json::scan::scan_into(Scanner::default(), black_box(&input), &mut idx);
+                dacodec::scan::scan_into(Scanner::default(), black_box(&input), &mut idx);
                 black_box(idx.len())
             });
         });
@@ -216,7 +216,7 @@ fn bench_floor(c: &mut Criterion) {
 /// fastest form of the two-stage path. `onepass` reads the document once.
 /// Both produce a byte-identical pool (`tests/onepass.rs`).
 fn bench_onepass(c: &mut Criterion) {
-    use vela_json::{onepass::OnePass, Workspace};
+    use dacodec::{onepass::OnePass, Workspace};
 
     #[inline(never)]
     fn w_indexed(ws: &mut Workspace, src: &[u8]) -> usize {

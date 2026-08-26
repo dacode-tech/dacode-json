@@ -8,8 +8,8 @@
 //! inputs, because those boundaries are exactly where the carry logic
 //! breaks.
 
-use vela_json::corpus;
-use vela_json::scan::{scan, Scanner};
+use dacodec::corpus;
+use dacodec::scan::{scan, Scanner};
 
 const SCANNERS: [Scanner; 2] = [Scanner::Branchless, Scanner::Branchless2x];
 

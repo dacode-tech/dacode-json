@@ -1,7 +1,7 @@
 //! Corpus-mutation differential fuzzer.
 //!
 //! Seeds from `testdata/` (JSONTestSuite and friends), mutates, and checks
-//! every property in [`vela_json::fuzz::check`] against `serde_json` and
+//! every property in [`dacodec::fuzz::check`] against `serde_json` and
 //! against the crate's own invariants.
 //!
 //! Deterministic: a run is fully described by its seed, so a failure is
@@ -10,8 +10,8 @@
 //! Usage: `fuzz [seed] [iterations]`
 
 use std::hint::black_box;
-use vela_json::corpus::Rng;
-use vela_json::fuzz::{check, mutate, seed_corpus, Finding};
+use dacodec::corpus::Rng;
+use dacodec::fuzz::{check, mutate, seed_corpus, Finding};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -36,14 +36,14 @@ fn main() {
         let mut case_rng = Rng::new(case_seed);
 
         if seeds.is_empty() {
-            buf = vela_json::corpus::random_value(&mut case_rng, 4).into_bytes();
+            buf = dacodec::corpus::random_value(&mut case_rng, 4).into_bytes();
         } else {
             let pick = case_rng.below(seeds.len() as u64) as usize;
             let s = seeds.get(pick).map(Vec::as_slice).unwrap_or(b"{}");
             mutate(&mut case_rng, s, &mut buf);
         }
 
-        if vela_json::strict::validate(&buf).is_ok() {
+        if dacodec::strict::validate(&buf).is_ok() {
             accepted += 1;
         }
 

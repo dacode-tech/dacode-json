@@ -121,7 +121,51 @@ the write side unattractive for large documents without a streaming builder.
 
 ---
 
-## 4. Actions
+## 4. The read path: what zero-copy actually costs
+
+Sections 2 and 3 measure *building* a representation. The claim behind
+`flat` is about the other side — reading one that already exists — so it
+needs its own measurement.
+
+The workloads `read_jsonflat_typed`, `read_jsonflat_dyn` and
+`read_serde_json` each sum a field across every record of the `records`
+corpus (10.44 MiB). The buffer is prepared **outside** the measurement
+window; only the reading is measured.
+
+### Peak RSS is the wrong instrument here
+
+Peak RSS is monotonic per process. Preparing the buffer pushes the peak up
+*before* the window opens, so the absolute peak is not attributable to the
+read — the first run of this reported "44 MiB to read a document that
+allocates nothing", which is preparation, not reading.
+
+`tools/memprofile.sh` therefore reports two figures: the absolute peak
+(blanked for `read_*` rows, because it is meaningless there) and the
+*additional* peak caused by the measured work alone. For the read rows the
+latter is 64 KiB — one page-granularity step, i.e. nothing.
+
+### The allocation counters tell it exactly
+
+| workload | in-window RSS | allocations | bytes allocated |
+|---|---|---|---|
+| `read_jsonflat_typed` | 64 KiB | **2** | **36 B** |
+| `read_jsonflat_dyn` | 64 KiB | **1** | **18 B** |
+| `read_serde_json` | 97 MiB | 1 310 661 | 82.99 MiB |
+
+Reading a 10.44 MiB document costs **36 bytes and two allocations**, against
+`serde_json`'s 83 MiB and 1.31 million. The two allocations are the
+accumulator `Vec`s in the harness, not the reader; the reader itself
+allocates nothing at all.
+
+This is the whole argument for the format, in one table. It is not that
+reading is *faster* — it is that reading does not build anything, so there
+is nothing to allocate and nothing to free. `serde_json` must reconstruct
+the entire document to read one field from it.
+
+The cost is paid at encode time and in flexibility: the layout is fixed, and
+a schema change is a format change. See `docs/ZEROCOPY.md`.
+
+## 5. Actions
 
 1. **`Workspace::with_capacity`'s heuristic is very loose** — `len/2 + 64`
    nodes assumes two bytes per node, the `[0,0,0,...]` worst case. Real

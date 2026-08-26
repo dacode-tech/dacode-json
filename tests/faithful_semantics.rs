@@ -4,7 +4,7 @@
 //! these starts failing, the port has drifted from the original — including
 //! the cases where the original is wrong.
 
-use vela_json::{Type, Workspace};
+use dacodec::{Type, Workspace};
 
 fn ws() -> Workspace {
     Workspace::new()
@@ -192,7 +192,7 @@ fn quirk_no_errors_ever() {
 
 #[test]
 fn arbitrary_bytes_never_panic() {
-    let mut rng = vela_json::corpus::Rng::new(0xF00D);
+    let mut rng = dacodec::corpus::Rng::new(0xF00D);
     let mut w = ws();
     let mut buf = Vec::with_capacity(512);
 
@@ -219,7 +219,7 @@ fn arbitrary_bytes_never_panic() {
 #[test]
 fn truncations_of_valid_documents_never_panic() {
     let mut w = ws();
-    let doc = vela_json::corpus::records(30, 5);
+    let doc = dacodec::corpus::records(30, 5);
     for n in 0..doc.len() {
         let src = doc.as_bytes().get(..n).unwrap_or_default();
         let d = w.parse(src);
@@ -253,8 +253,8 @@ fn structurally_hostile_inputs() {
 
 #[test]
 fn scanner_choice_does_not_change_valid_results() {
-    use vela_json::Scanner;
-    let src = vela_json::corpus::records(200, 21);
+    use dacodec::Scanner;
+    let src = dacodec::corpus::records(200, 21);
 
     let mut a = Workspace::new().with_scanner(Scanner::Scalar);
     let mut b = Workspace::new().with_scanner(Scanner::Branchless);

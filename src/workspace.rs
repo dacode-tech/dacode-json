@@ -13,14 +13,14 @@
 //! from it, so a second parse cannot compile while the first result is live.
 //!
 //! ```
-//! # use vela_json::Workspace;
+//! # use dacodec::Workspace;
 //! let mut ws = Workspace::new();
 //! let doc = ws.parse(br#"{"a":1}"#);
 //! assert_eq!(doc.root().get("a").and_then(|v| v.as_i64()), Some(1));
 //! ```
 //!
 //! ```compile_fail
-//! # use vela_json::Workspace;
+//! # use dacodec::Workspace;
 //! let mut ws = Workspace::new();
 //! let first = ws.parse(br#"{"a":1}"#);
 //! let second = ws.parse(br#"{"b":2}"#); // second borrow while `first` lives

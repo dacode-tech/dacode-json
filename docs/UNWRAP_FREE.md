@@ -27,7 +27,7 @@ top of `src/lib.rs`.
 
 ## 1. Evidence from this crate
 
-`vela-json` is a parser — the most panic-prone kind of code there is — and it
+`dacodec` is a parser — the most panic-prone kind of code there is — and it
 has zero panicking constructs in library code. This is enforced, not claimed:
 
 ```rust

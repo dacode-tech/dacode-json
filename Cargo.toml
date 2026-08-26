@@ -1,11 +1,14 @@
 [package]
-name = "vela-json"
+name = "dacodec"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
-description = "Rust port of Vela stage2 tier-3 JSON parser (yyjson-style flat pool DOM fed by a simdjson-style structural index)"
+description = "Fast, allocation-light JSON for Rust: a drop-in serde_json replacement plus a zero-copy wire format"
+repository = "https://github.com/dacode-tech/dacodec"
 license = "Apache-2.0"
-publish = false
+keywords = ["json", "serde", "parser", "zero-copy", "simd"]
+categories = ["encoding", "parser-implementations"]
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1", optional = true }
@@ -46,6 +49,7 @@ sonic-rs = "0.5"
 rkyv = "0.8"
 
 [features]
+# `serde` is on by default: it is what the public API is built from.
 default = ["serde"]
 # `serde::Deserializer` over the node pool - see src/de.rs.
 serde = ["dep:serde", "dep:zmij"]

@@ -19,12 +19,12 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
-use vela_json::corpus;
-use vela_json::tiers::{
+use dacodec::corpus;
+use dacodec::tiers::{
     tier0::Tier0, tier1::Tier1, tier2::Tier2, tier3::Tier3, JsonTier,
 };
-use vela_json::tiers::tier2::Tier2Cached;
-use vela_json::Workspace;
+use dacodec::tiers::tier2::Tier2Cached;
+use dacodec::Workspace;
 
 const SEED: u64 = 0x71E45;
 
@@ -244,7 +244,7 @@ fn bench_validate(c: &mut Criterion) {
         });
 
         // The only one that actually validates.
-        let mut strict = vela_json::strict::StrictParser::with_capacity(src.len());
+        let mut strict = dacodec::strict::StrictParser::with_capacity(src.len());
         let _ = strict.validate(src);
         group.bench_with_input(BenchmarkId::new("strict_rfc8259", name), src, |b, src| {
             b.iter(|| black_box(strict.validate(black_box(src)).is_ok()));
@@ -272,11 +272,11 @@ fn bench_dom_build(c: &mut Criterion) {
         let src = json.as_bytes();
         group.throughput(Throughput::Bytes(src.len() as u64));
 
-        let mut tape_fresh = vela_json::tiers::tier2::tape::TapeBuilder::new();
+        let mut tape_fresh = dacodec::tiers::tier2::tape::TapeBuilder::new();
         group.bench_with_input(BenchmarkId::new("tier2_tape_fresh", name), src, |b, src| {
             b.iter(|| {
                 // Fresh builder each time = Vela's json_tape_build.
-                let mut t = vela_json::tiers::tier2::tape::TapeBuilder::new();
+                let mut t = dacodec::tiers::tier2::tape::TapeBuilder::new();
                 black_box(t.build(black_box(src)).len())
             });
         });
@@ -286,7 +286,7 @@ fn bench_dom_build(c: &mut Criterion) {
         });
 
         group.bench_with_input(BenchmarkId::new("tier3_pool_fresh", name), src, |b, src| {
-            b.iter(|| black_box(vela_json::parse_to_pool(black_box(src)).len()));
+            b.iter(|| black_box(dacodec::parse_to_pool(black_box(src)).len()));
         });
 
         let mut ws = Workspace::with_capacity(src.len());

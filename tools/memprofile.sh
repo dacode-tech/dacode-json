@@ -42,8 +42,9 @@ for line in open(sys.argv[1]):
         continue
     rows.append({
         "impl": f[0], "input": int(f[2]), "rss": int(f[3]),
-        "heap": int(f[4]), "chunks": int(f[5]), "allocs": int(f[6]),
-        "abytes": int(f[7]), "note": f[8] if len(f) > 8 else "",
+        "rss_win": int(f[4]), "heap": int(f[5]), "chunks": int(f[6]),
+        "allocs": int(f[7]), "abytes": int(f[8]),
+        "note": f[9] if len(f) > 9 else "",
     })
 
 if not rows:
@@ -54,21 +55,30 @@ inp = rows[0]["input"]
 print(f"\n=== memory: {sys.argv[2]}, input {human(inp)} ({inp} bytes) ===")
 print(f"    baseline peak RSS {human(base)} (corpus generated + touched, nothing parsed)\n")
 
-hdr = (f"{'implementation':<20} {'peak RSS':>11} {'over base':>11} {'xJSON':>7} "
+hdr = (f"{'implementation':<20} {'over base':>11} {'xJSON':>7} {'in-window':>11} "
        f"{'rust allocs':>12} {'rust bytes':>12}  note")
 print(hdr)
 print("-" * len(hdr))
 work = [r for r in rows if r["impl"] != "baseline"]
-for r in sorted(work, key=lambda r: r["rss"]):
+for r in sorted(work, key=lambda r: (r["impl"].startswith("read_"), r["rss"])):
     over = r["rss"] - base
     ratio = over / inp if inp else 0
-    print(f"{r['impl']:<20} {human(r['rss']):>11} {human(over):>11} {ratio:>6.2f}x "
+    # For read_* the absolute peak includes preparing the buffer, so show
+    # a dash and let the in-window delta speak.
+    over_s = "-" if r["impl"].startswith("read_") else human(over)
+    ratio_s = "-" if r["impl"].startswith("read_") else f"{ratio:>6.2f}x"
+    print(f"{r['impl']:<20} {over_s:>11} {ratio_s:>7} {human(r['rss_win']):>11} "
           f"{r['allocs']:>12} {human(r['abytes']):>12}  {r['note']}")
 print("""
 peak RSS    getrusage(RUSAGE_SELF).ru_maxrss for the whole process. Counts
             Rust, C, mmap and stacks alike -- the only metric that is
             comparable across the FFI boundary.
 over base   peak RSS minus the `baseline` run, i.e. the cost of parsing.
+            Shown as `-` for read_* rows: peak RSS is monotonic per process
+            and those rows build their buffer before the measured window,
+            so the absolute peak is not attributable to the read.
+in-window   additional peak RSS caused by the measured work alone. This is
+            the meaningful RSS figure for read_* rows.
 rust *      GlobalAlloc counters. Exact for Rust implementations; zero for
             yyjson and simdjson by construction, since a C malloc never
             reaches Rust's allocator.

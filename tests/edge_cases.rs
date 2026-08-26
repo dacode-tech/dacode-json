@@ -16,8 +16,8 @@
 
 use std::fs;
 use std::path::Path;
-use vela_json::strict::{self, ErrorKind, StrictParser};
-use vela_json::{de, ser};
+use dacodec::strict::{self, ErrorKind, StrictParser};
+use dacodec::{de, ser};
 
 fn testdata(sub: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(sub)
@@ -431,7 +431,7 @@ fn deep_nesting_is_bounded_not_crashing() {
     for depth in [100usize, 255, 256, 257, 1000, 100_000] {
         let doc = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
         let r = strict::validate(doc.as_bytes());
-        if depth <= vela_json::pool::STACK_MAX {
+        if depth <= dacodec::pool::STACK_MAX {
             assert!(r.is_ok(), "depth {depth} should be accepted: {r:?}");
         } else {
             assert_eq!(

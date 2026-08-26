@@ -266,7 +266,7 @@ fn load(port_text: &str, doc: &[u8]) -> Result<String, AppError> {
     let raw: u16 = port_text.parse().map_err(|_| AppError::BadPort(0))?;
     let port = Port::new(raw).ok_or(AppError::BadPort(raw))?;
 
-    let mut parser = vela_json::strict::StrictParser::new();
+    let mut parser = dacodec::strict::StrictParser::new();
     let parsed = parser.parse(doc).map_err(|e| AppError::Json(e.to_string()))?;
 
     let name = parsed

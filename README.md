@@ -1,276 +1,393 @@
-# vela-json
+# dacodec
 
-A Rust port of **all four of Vela stage2's JSON tiers**, built to answer one
-question: *is the Vela algorithm slow, or was velac's code generation slow?*
+Fast, allocation-light JSON for Rust — a drop-in `serde_json` replacement
+for the typed path, plus a zero-copy wire format for data you read more than
+once.
 
-Answer: **the algorithms are fine.** Ported without redesign, tier 3 runs
-2.3–3.7× faster under rustc/LLVM.
+```toml
+[dependencies]
+dacodec = "0.1"
+```
 
-| Stage | Vela ([`JSON_IMPROVEMENT_PLAN.md:52-73`][plan]) | Straight port | After profiling |
-|---|---|---|---|
-| Stage 1 structural scan | 914 MB/s | 1.13–2.34 GiB/s | **2.14–3.25 GiB/s** (2.4–3.8×) |
-| Full DOM build | 166 MB/s | 383–606 MiB/s | **450–785 MiB/s** (2.7–4.7×) |
-| 68-byte document | 5 590 ns | 75 ns | — (75×) |
+```rust
+use serde::{Serialize, Deserialize};
 
-The third column is the interesting one: profiling moved Stage 1 a further
-1.5× past the straight port, by fixing the part the design docs were *not*
-pointing at.
+#[derive(Serialize, Deserialize)]
+struct Config { name: String, port: u16 }
 
-| document | what is in it |
-|---|---|
-| **[`docs/TIERS.md`](docs/TIERS.md)** | all four Vela tiers head-to-head; which should be the default |
-| **[`fuzz/README.md`](fuzz/README.md)** | the two fuzzing harnesses and what they check |
-| **[`docs/RESULTS.md`](docs/RESULTS.md)** | all benchmarks, methodology, caveats, bugs found |
-| **[`docs/PROFILING.md`](docs/PROFILING.md)** | CPU hot paths for every implementation incl. yyjson/simdjson |
-| **[`docs/MEMORY.md`](docs/MEMORY.md)** | peak RSS and allocation counts across all implementations |
-| **[`docs/CBASELINE.md`](docs/CBASELINE.md)** | the port vs yyjson and simdjson, built from vendored source |
-| **[`docs/ZEROCOPY.md`](docs/ZEROCOPY.md)** | a YaFF-style zero-copy wire format for JSON |
-| **[`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md)** | panic-free design study |
+let cfg: Config = dacodec::from_str(r#"{"name":"edge","port":8080}"#)?;
+let json = dacodec::to_string(&cfg)?;
+```
 
-[plan]: ../../../vela/docs/stage2/JSON_IMPROVEMENT_PLAN.md
+Change `serde_json::` to `dacodec::` and nothing else. Output is
+byte-identical, verified over the whole test corpus.
 
 ---
 
-## What was ported
+## Why
 
-**All four tiers**, behind one `JsonTier` trait — the common interface
-`P1_2_JSON_TIERS.md:109-141` specifies.
+| | dacodec | serde_json |
+|---|---|---|
+| DOM build, 10 MiB | **419 MiB/s** | 132 MiB/s |
+| validate, 1 MiB | **2.47 ms** | 7.22 ms |
+| string escaping, clean text | **9.24 GiB/s** | 2.19 GiB/s |
+| DOM memory, 10 MiB | **43.4 MiB** | 97.1 MiB |
+| deserialize to structs, 4 MiB | 194 MiB/s | **293 MiB/s** |
+| serialize from structs, 4 MiB | 717 MiB/s | **761 MiB/s** |
+| RFC 8259 (JSONTestSuite) | 284/284 | 284/284 |
+| float parsing | correctly rounded | off by ≤2 ULP on 17.7% of high-precision literals |
 
-| tier | algorithm | Vela LOC | Rust module |
-|---|---|---|---|
-| 0 | scalar detection only; containers stubbed | 289 | `tiers::tier0` |
-| 1 | recursive descent — **Vela's default** | 590 | `tiers::tier1` |
-| 2 | structural index + tape DOM | 1619 | `tiers::tier2` |
-| 3 | flat node pool | 2063 | `pool`/`builder`/`query`/`workspace` |
+Read that table honestly: **`serde_json` is faster at struct
+deserialization, and at serialization.** It is a single-pass streaming
+deserializer that never builds an intermediate, and for "parse into a struct
+once, throw the text away" that is the better architecture. `sonic-rs` beats
+both. If that is your whole workload, keep what you have.
 
-Tier 3, in detail:
+dacodec wins where a document is *inspected* rather than converted: DOM
+construction (3.2×), validation (2.9×), escaping (4.2×), memory (2.2×) —
+and by three to six orders of magnitude on anything you read more than once,
+via the zero-copy format below.
 
-| Vela source | Rust module |
-|---|---|
-| `tier2/structural.vl` | `scan::scalar` |
-| `tier2/structural_simd.vl` (S6, S6b) | `scan::branchless` |
-| `runtime/simd_json_branchless.ll` | `scan::branchless`, `scan::neon` |
-| — (specified, never built) | `scan::table` |
-| `tier3/parse_indexed.vl` — `__json_build_from_si` | `builder` |
-| `runtime/json_pool_write.ll` — `__json_parse_scalar_fast` | `scalar` |
-| `tier3/parse_indexed.vl` — `json_workspace_create/_ws` | `workspace` |
-| `tier3/parse.vl` — query API | `query` |
-| — (new) | `strict`, `de`, `ser`, `flat` |
+All figures: Apple M-series, `lto="fat"`, one process per benchmark.
+Reproduce with `tools/isolate.sh`. Full tables, including the corpora where
+these reverse: [`docs/RESULTS.md`](docs/RESULTS.md).
 
-Every function carries a `file:line` reference back to the Vela original.
+Full numbers, methodology and caveats: [`docs/RESULTS.md`](docs/RESULTS.md).
 
-### Which tier should be the default?
+---
 
-Tier 1 — the one Vela already defaults to, though not for the reason its
-docs give. It is the fastest tier for single-field access at **every**
-document size from 8 to 16 384 keys, and it allocates nothing.
+## Using it
 
-| one field, last key | tier 1 | tier 2 | tier 3 | serde_json |
-|---|---|---|---|---|
-| 64 keys | **1.13 µs** | 1.80 µs | 2.50 µs | 5.43 µs |
-| 16 384 keys | **251 µs** | 379 µs | 569 µs | 2.50 ms |
-
-The indexed tiers only win past **~16 lookups per document**, and only if
-the index is cached — which tier 2's API never does. Full analysis in
-[`docs/TIERS.md`](docs/TIERS.md).
-
-## Two parsers
-
-**`Workspace`** — the faithful port. Bit-compatible with Vela, quirks
-included: numbers are `i64` only (`3.14` parses as `314`), `null` is never
-validated (`nope` parses as null), strings stay as raw slices, brackets are
-not matched, depth past 256 is silently dropped, and nothing ever errors.
-
-**`strict::StrictParser`** — same data structures, same Stage 1, RFC
-8259-conformant Stage 2. Real `f64` numbers, grammar validation, bracket
-matching, surrogate-pair checking, and errors with byte offsets.
-
-Benchmarking one against the other isolates the cost of correctness from the
-cost of the representation. It runs 1.4–2.0×, and still beats `serde_json` by
-1.3–3.0×.
+### Owned types
 
 ```rust
-use vela_json::Workspace;
+let cfg: Config = dacodec::from_str(text)?;
+let cfg: Config = dacodec::from_slice(bytes)?;
+let cfg: Config = dacodec::from_reader(file)?;
 
-let mut ws = Workspace::new();
-let doc = ws.parse(br#"{"name":"vela","tiers":[0,1,2,3]}"#);
-assert_eq!(doc.root().get("name").and_then(|v| v.as_str()).as_deref(), Some("vela"));
+let s: String   = dacodec::to_string(&cfg)?;
+let v: Vec<u8>  = dacodec::to_vec(&cfg)?;
+dacodec::to_writer(&mut buffer, &cfg)?;   // reuses the buffer
 ```
+
+### Borrowing types — no copying
+
+Strings borrow from the input whenever they contain no escapes:
 
 ```rust
-use vela_json::strict::StrictParser;
+#[derive(Deserialize)]
+struct Row<'a> {
+    id: u64,
+    #[serde(borrow)] name: &'a str,
+    #[serde(borrow)] tags: Vec<&'a str>,
+}
 
-let mut p = StrictParser::new();
-let err = p.validate(br#"{"a":1]"#).unwrap_err();
-assert_eq!(err.to_string(), "mismatched bracket at byte 6");
+let mut p = dacodec::Parser::new();
+let row: Row<'_> = p.deserialize(bytes)?;   // row.name points into `bytes`
 ```
 
-## Headline findings
+A borrowing type needs `Parser` rather than `from_str`, because the node
+pool must outlive the borrow and a free function cannot express that
+without leaking it.
 
-**The lookup-table classifier Vela's design docs specify would have made it
-slower.** `P1_2_JSON_TIERS.md:91` asks for "branchless character
-classification (lookup tables)" and it was never built. Built here both
-ways: the nibble-shuffle table is 19% faster in isolation and **2-8% slower
-end-to-end**, because classification is off Stage 1's critical path.
+### Parsing many documents
 
-**Position extraction is 64-82% of Stage 1; classification is 13-25%.**
-Replacing Vela's serial per-bit loop with simdjson's unconditional
-eight-slot write is worth +30-77%.
+`from_str` allocates a parser per call. Reuse one and a steady-state parse
+allocates **nothing**:
 
-**Zero-copy struct deserialization works and is 2.6× faster than
-`serde_json`** — 1.08 GiB/s vs 413 MiB/s, reading a pre-built `jsonflat`
-buffer into `#[derive(Deserialize)] struct Row<'a> { name: &'a str }` with
-no parsing and no copying. See [`docs/ZEROCOPY.md`](docs/ZEROCOPY.md).
-
-**Stage 2 is 63–82% of parse time**, not Stage 1 — measured directly in
-`benches/stage2.rs`. An obvious-looking optimisation of its walk loop made
-things 1–8% *slower*, because LLVM had already removed the redundant bounds
-checks. Recorded in [`docs/PROFILING.md`](docs/PROFILING.md) §3b.
-
-**A tape is the wrong shape for struct deserialization.** The same
-representation that beats simd-json by 3.5x on string-heavy DOM building
-loses to `serde_json` by 1.5x when filling a `#[derive(Deserialize)]`
-struct, because streaming parsers never build an intermediate at all.
-
-**`serde_json`'s default float parser is not correctly rounded** — it
-deviates on 25% of high-precision literals. Ours matches `str::parse`.
-
-**Vela's `emit_v2.vl` is not O(n).** It is documented as a "DualBuffer-backed
-O(n) emitter" but calls `json_escape_string` (`common.vl:52`), a per-byte
-string-concat loop, so string output is quadratic.
-
-**`json_validate` does not validate.** Tiers 1 and 3 accept `{`, `[1,2`,
-`txxx`, `[1,]` and every other truncated document, because the skip
-functions return end-of-input and `validate` only checks that position
-equals `len`. Agreement with a real parser: tier 0 36.4%, tier 1 79.1%,
-tier 2 86.6%, tier 3 79.1%.
-
-**Tier 2 throws its own index away.** `json_object_get`, `object_count`,
-`object_keys` and `array_count` each call `json_tape_build`, so tier 2 does
-strictly more work than tier 1 for the same result — 4.7× more at 64
-lookups. Caching the tape turns a 2.2× loss into a 2.1× win.
-
-## Bugs in the Vela sources
-
-Found while porting. Details in [`docs/RESULTS.md` §6](docs/RESULTS.md).
-
-1. **S6/S6b disagree with the scalar scanner on invalid input.** A backslash
-   outside a string escapes the next byte in the branchless scanner but not
-   in the scalar reference, so tier 3's output for malformed input depends on
-   which scanner is compiled in. `t859_json_branchless.vl` asserts they are
-   equivalent but only tests backslashes *inside* strings.
-2. `read_null` in `json_pool_write.ll:732` is a no-op whose comment claims it
-   performs a word compare.
-3. `pool_container_to_json` reads object children from `payload` but array
-   children from `idx + 1` — works only by accident.
-4. `json_pool_object_get_float` is declared `i64`.
-5. `emit_v2.vl`'s quadratic escaping, above.
-6. `json_validate` accepting truncated input in all tiers.
-7. Tier 2's `json_array_get` (`tier2/parse.vl:417`) does not use the tape —
-   it is byte-for-byte tier 1's scan.
-8. Tier 2's SIMD is off by default (`structural_gate.vl:4`), so stock tier 2
-   benchmarks measure the scalar scanner.
-9. Tier 1's `json_skip_value` recursion is unbounded — stack exhaustion on
-   untrusted nested input.
-
-## Panic freedom
-
-No `unwrap`, `expect`, `panic!` or slice indexing in library code, enforced
-by `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
-clippy::indexing_slicing, ...)]` and tested by 30 000 random-byte inputs,
-every prefix of a valid document, and 40 000 corrupted `jsonflat` buffers
-(where the buffer *is* the data structure, so a flipped byte is an attack).
-
-## Layout
-
-```
-src/
-  tiers/
-    mod.rs       the JsonTier contract shared by all four
-    common.rs    common.vl - skip/scan helpers
-    tier0.rs     scalar only
-    tier1.rs     recursive descent (Vela's default)
-    tier2/       structural index + tape DOM
-    tier3.rs     adapter over the pool implementation below
-  tag.rs         node tag encoding (aux << 8 | type)
-  pool.rs        the flat 16-byte node pool
-  scan/
-    mod.rs       StructuralIndex + unrolled bit extraction
-    scalar.rs    byte-at-a-time reference scanner
-    branchless.rs  S6 / S6b, generic over the classifier
-    neon.rs      AArch64 compare classifier
-    table.rs     the lookup tables Vela specified but never built
-  scalar.rs      __json_parse_scalar_fast, quirks intact
-  builder.rs     Stage 2 state machine (index-fed)
-  onepass.rs     single-pass builder, no index (tier3/parse_onepass.vl)
-  query.rs       Doc / Value / entries / elements / skip_subtree
-  unescape.rs    correct decoder + Vela's lossy one, for comparison
-  workspace.rs   reusable arena
-  strict.rs      RFC 8259 parser over the same pool
-  de.rs          serde::Deserializer over the pool
-  ser.rs         serde::Serializer with a vectorised escaper
-  flat/
-    mod.rs       jsonflat: dynamic zero-copy wire format
-    typed.rs     jsonflat: schema-driven layout (0.67x vs dynamic 1.48x)
-  corpus.rs      deterministic test/bench data
-  bin/profile.rs profiling workloads
-tests/
-  tier_contract.rs         all four tiers vs each other and serde_json
-  onepass.rs               single-pass == indexed, byte for byte
-  scanner_equivalence.rs   Stage 1 oracle tests (port of t859 + fuzz)
-  classifier.rs            all 256 bytes, all 9 scanners
-  faithful_semantics.rs    quirks pinned + panic freedom
-  conformance_suite.rs     JSONTestSuite + JSON_checker, vendored in testdata/
-  strict_conformance.rs    hand-written cases + serde_json differential
-  edge_cases.rs            encoding/whitespace/number/string/structure edges
-  fuzz_bounded.rs          CI slice of the mutation fuzzer
-  serde_de.rs              deserializer vs serde_json
-  serde_ser.rs             serializer, byte-identical to serde_json
-  flat.rs                  roundtrip + 40k hostile buffers
-  flat_typed.rs            schema layout, layout/schema confusion, fuzz
-benches/
-  tiers.rs  scan.rs  stage2.rs  parse.rs  query.rs  structs.rs
-  zerocopy.rs  cbaseline.rs
-examples/
-  typestate.rs   runnable unwrap-free demo
-  sizes.rs       jsonflat buffer sizes
-testdata/                        JSONTestSuite, JSON_checker, number edge cases
-fuzz/                            libFuzzer targets (nightly)
-tools/
-  profile.sh  symbolicate.py     CPU profiling with symbols
-  memprofile.sh                  memory matrix, one process per impl
-  cbench.sh                      isolated cross-language benchmarks
+```rust
+let mut p = dacodec::Parser::with_capacity(64 * 1024);
+for line in lines {
+    let doc = p.parse(line)?;
+    if let Some(v) = doc.root().get("status") {
+        println!("{:?}", v.as_i64());
+    }
+}
 ```
 
-## Running
+### Errors carry a position
+
+```rust
+match dacodec::from_str::<Config>(bad) {
+    Err(e) => println!("{e} (byte {:?})", e.offset()),   // "expected ':' at byte 11"
+    Ok(_)  => {}
+}
+```
+
+---
+
+## Zero-copy: `dacodec::flat`
+
+For data you write once and read many times — caches, mmapped files, RPC
+payloads — parsing at every read is wasted work. `flat` stores a document in
+a self-contained buffer that is read directly.
+
+```rust
+use dacodec::flat::{self, View};
+
+// once, on the writer side
+let mut p = dacodec::Parser::new();
+let buf = flat::encode(p.parse(json)?)?;      // store or send `buf`
+
+// many times, on the reader side
+let view = View::new(&buf)?;                   // O(1), no parsing
+let name = view.root().at(0).and_then(|r| r.get("name"));
+```
+
+### Schema-driven, when both ends know the type
+
+Field positions become compile-time constants, so key strings are never
+stored and a read is a load at a fixed offset:
+
+```rust
+use dacodec::flat_struct;
+use dacodec::flat::typed::{TypedView, TypedWriter, de};
+
+flat_struct! {
+    pub struct Record : RecordFields {
+        id: u64, age: u32, active: bool, score: i64,
+        name: str, city: str, tags: [str],
+    }
+}
+
+let mut w = TypedWriter::<Record>::new();
+w.record().u64(1).u32(30).bool(true).i64(-5)
+         .str("alpha").str("london").str_list(["x", "y"]);
+let buf = w.finish();
+
+let v = TypedView::<Record>::new(&buf)?;
+assert_eq!(v.name(0), Some("alpha"));          // borrowed, no copy
+
+// or straight into a struct
+let rows: Vec<Row<'_>> = de::from_all(&v)?;
+```
+
+The layout is chosen by **which type you construct**, not a Cargo feature —
+features are additive and global, so one crate enabling the other mode would
+silently switch every crate over. The header records which layout was
+written plus a hash of the field names and types, so reading a buffer with
+the wrong schema is `Err(SchemaMismatch)`, never silent garbage.
+
+### What it costs and what it buys
+
+Reading a **10.4 MiB** document:
+
+| | allocations | bytes allocated |
+|---|---|---|
+| `flat::typed` | **2** | **36 B** |
+| `flat` dynamic | **1** | **18 B** |
+| `serde_json` (must parse) | 1 310 661 | 82.99 MiB |
+
+Reading one field from a 1 MiB document:
+
+| | time | size on disk |
+|---|---|---|
+| `flat::typed` | **2.49 ns** | 0.67× the JSON |
+| `flat` dynamic | 13.6 ns | 1.48× |
+| `rkyv` | 1.02 ns | 0.59× |
+| `serde_json` (re-parse) | 7.06 ms | 1.00× |
+
+So: **2.49 ns versus 7.06 ms**, at 0.67× the size — because nothing is
+parsed, only addressed.
+
+The trade: encoding costs more (848 µs per MiB, against `serde_json`'s
+1.30 ms — so encoding is actually cheaper, but you must do it up front),
+and the format is a fixed binary layout, not text anyone can read.
+**`rkyv` is faster and smaller still** (1.02 ns, 0.59×) because it has a
+compile-time schema and stores no type tags. Use `rkyv` if your data never
+arrives as JSON. Use this if it does.
+
+Details, including where this loses: [`docs/ZEROCOPY.md`](docs/ZEROCOPY.md).
+
+---
+
+## The examples above, runnable
 
 ```bash
-cargo test                          # 252 tests
-cargo test --features fuzzing       # + the bounded fuzzer
-cargo run --release --features fuzzing --bin fuzz   # mutation fuzzer
-cargo bench --bench tiers           # all four Vela tiers head-to-head
-cargo bench --bench scan            # classifiers, phase breakdown, scanners
-cargo bench --bench parse           # DOM parse vs the field
-cargo bench --bench query           # parse + access patterns
-cargo bench --bench structs         # struct de/ser + escaping
-cargo bench --bench zerocopy        # jsonflat vs rkyv vs re-parsing
-cargo clippy --lib                  # enforces panic freedom
-cargo run --example typestate
-cargo run --release --example sizes
-tools/profile.sh vela_de 200        # CPU profile with symbols
-tools/profile.sh yyjson 200         # ...including the C baselines
-tools/memprofile.sh records 10485760   # memory matrix
-./target/release/memprofile selftest   # calibrate the memory instrument
-tools/cbench.sh c_parse_10mb        # isolated cross-language benchmark
-tools/isolate.sh parse '^parse_10mb/'  # one process per benchmark, any bench
+cargo run --example readme
 ```
 
-Toolchain: `rustc 1.95.0`. Nothing depends on a feature newer than 1.61.
+`examples/readme.rs` is every snippet on this page, compiled and asserted —
+including a check that a borrowed `&str` really points into the input
+buffer. A README example that does not compile is worse than none.
 
-## Attribution
+## Running the tests
 
-The algorithms descend from **simdjson** (Apache-2.0; Lemire, Langdale,
-Keiser) via Vela's tier 2, and **yyjson** (MIT; YaoYuan/ibireme) via Vela's
-tier 3, as recorded in
-`bootstrap/stage2/src/stdlib/encoding/json/AUTHORS`. No C/C++ code was
-copied — only strategies.
+```bash
+cargo test                      # 262 tests
+cargo test --features fuzzing   # + the bounded fuzzer
+cargo test --all-features       # + the C baselines (needs a C/C++ compiler)
+cargo clippy --lib --all-targets
+```
+
+What is covered:
+
+| suite | what |
+|---|---|
+| `conformance_suite.rs` | JSONTestSuite (319 files), JSON_checker, encodings, number corpus |
+| `edge_cases.rs` | the categories yyjson's and simdjson's unit tests cover |
+| `serde_de.rs` / `serde_ser.rs` | differential against `serde_json`, byte-identical output |
+| `flat.rs` / `flat_typed.rs` | round-trip plus 40 000 corrupted buffers |
+| `onepass.rs` | two independent parsers must produce identical output |
+| `tier_contract.rs` | the reference implementations against each other |
+| `fuzz_bounded.rs` | a deterministic slice of the mutation fuzzer |
+
+Test data under `testdata/` is vendored with provenance and licences — see
+[`testdata/README.md`](testdata/README.md). Nothing is downloaded at test
+time.
+
+### Benchmarks
+
+```bash
+cargo bench --bench parse       # vs serde_json, simd-json, sonic-rs
+cargo bench --bench structs     # struct de/ser and escaping
+cargo bench --bench zerocopy    # flat vs rkyv vs re-parsing
+cargo bench --all-features --bench cbaseline   # vs yyjson and simdjson (C)
+
+tools/isolate.sh parse '^parse_10mb/'   # one process per benchmark
+```
+
+Use `tools/isolate.sh` for anything you intend to quote. Running many
+allocation-heavy benchmarks in one process moved one measurement here by
+**2.5×** with no change to the code under test;
+[`docs/RESULTS.md` §12](docs/RESULTS.md) records how that was found and
+ruled out.
+
+---
+
+## Fuzzing
+
+Two harnesses, because they answer different questions.
+
+### Stable — works everywhere, no nightly
+
+```bash
+cargo run --release --features fuzzing --bin fuzz              # 100k iterations
+cargo run --release --features fuzzing --bin fuzz -- 42 5000000
+cargo test --features fuzzing --test fuzz_bounded              # CI slice
+```
+
+Seeds from `testdata/` and mutates with a JSON-aware operator set, so
+mutations stay *nearly* valid — about 4.8% remain parseable, which is where
+the interesting states are. Random bytes almost never get past the first
+rejection branch.
+
+Deterministic: a failure prints a `case_seed` that replays it exactly with
+`fuzz <case_seed> 1`.
+
+Runs on Linux, macOS and Windows, on stable, with no sanitizer.
+
+### libFuzzer — coverage-guided, needs nightly
+
+```bash
+rustup toolchain install nightly
+cargo install cargo-fuzz
+
+cargo +nightly fuzz run differential
+cargo +nightly fuzz run roundtrip
+cargo +nightly fuzz run flat_view
+```
+
+| target | checks | upstream analogue |
+|---|---|---|
+| `differential` | everything below, against `serde_json` | yyjson `fuzzer.c`, simdjson `fuzz_parser` |
+| `roundtrip` | serialize → parse → serialize is a fixed point | simdjson `fuzz_minify` |
+| `flat_view` | hostile bytes through the zero-copy reader | simdjson `fuzz_padded` |
+
+**Platform notes.** `cargo-fuzz` uses libFuzzer, which needs a compiler
+runtime that ships with LLVM:
+
+* **Linux** — works out of the box. ASan/UBSan via `--sanitizer address`.
+* **macOS** — works; if linking fails, `xcode-select --install`. Apple
+  Silicon needs no special flags.
+* **Windows** — libFuzzer support is limited. Use WSL, or run the stable
+  fuzzer, which is fully supported there.
+* **Docker/CI** — `cargo +nightly fuzz run differential -- -max_total_time=300`
+  gives a bounded run suitable for a pipeline.
+
+`fuzz/` is its own workspace, so a plain `cargo test` never tries to build
+it without nightly.
+
+### What the fuzzers check
+
+Not merely "does it crash":
+
+* `strict` agrees with `serde_json` on validity;
+* accepted documents deserialize to the same value (2 ULP float slack — the
+  measured worst case for `serde_json`'s float parser);
+* the single-pass and index-fed parsers produce byte-identical output;
+* all nine structural scanners agree on valid documents;
+* serialize → re-parse preserves the value;
+* a `flat` buffer just built passes its own deep validation;
+* nothing panics on any input.
+
+---
+
+## Guarantees
+
+**No panics.** No `unwrap`, `expect`, `panic!` or slice indexing exists on
+any path reachable from the public API. Enforced by
+`#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic,
+clippy::indexing_slicing)]` and checked by fuzzing.
+[`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md) explains how far that idea
+generalises and where it stops.
+
+**No allocation in steady state.** A reused `Parser` allocates once and
+resets.
+
+**Correctly-rounded floats.** Every literal parses to the same `f64` as
+`str::parse`. `serde_json`'s default parser does not — measured over 200 000
+high-precision literals it deviates on 17.7%, by up to 2 ULP.
+
+**Unsafe.** Six blocks, all in SIMD kernels or one `Vec::set_len` after a
+`reserve`, each with a `SAFETY` comment stating the invariant.
+
+---
+
+## Features
+
+| feature | default | what |
+|---|---|---|
+| `serde` | ✅ | the public API; without it only the low-level parser is available |
+| `fuzzing` | | the differential fuzz harness |
+| `cbench` | | vendored yyjson and simdjson, for benchmarking (needs a C/C++ compiler) |
+| `profiling` | | the CPU and memory profiling binaries |
+
+---
+
+## Documentation
+
+| | |
+|---|---|
+| [`docs/RESULTS.md`](docs/RESULTS.md) | all benchmarks, methodology, bugs found |
+| [`docs/ZEROCOPY.md`](docs/ZEROCOPY.md) | the `flat` format, and where it loses |
+| [`docs/MEMORY.md`](docs/MEMORY.md) | peak RSS and allocation counts, and why peak RSS is the wrong instrument for the read path |
+| [`docs/PROFILING.md`](docs/PROFILING.md) | CPU hot paths; four optimisations that failed and why |
+| [`docs/CBASELINE.md`](docs/CBASELINE.md) | measured against yyjson and simdjson in C |
+| [`docs/TIERS.md`](docs/TIERS.md) | the reference implementations this began as |
+| [`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md) | panic-free design study |
+
+---
+
+## Origins
+
+The parser began as a port of the JSON tiers in the Vela compiler's standard
+library, themselves modelled on [yyjson](https://github.com/ibireme/yyjson)
+(a flat node pool) and [simdjson](https://github.com/simdjson/simdjson) (a
+SIMD structural index). Those ports are still here under `tiers` and are
+measured against the C originals in
+[`docs/CBASELINE.md`](docs/CBASELINE.md) — yyjson remains 1.36× ahead on
+DOM construction, and this crate is 2.8× ahead of it on string-heavy data
+because it never decodes a string until asked.
+
+The shipping parser is `strict`: the same representation with RFC 8259
+validation and correctly-rounded numbers added.
+
+---
+
+## Licence
+
+Apache-2.0. Vendored test data and benchmark baselines keep their own
+licences; see `testdata/README.md` and `vendor/README.md`.
+
+Built by [Dacode Tech](https://dacode.tech), Romania.

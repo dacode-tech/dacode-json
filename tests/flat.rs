@@ -6,9 +6,9 @@
 //! *is* the data structure — so every accessor is fuzzed against random
 //! and mutated input and must return `None`, never panic.
 
-use vela_json::flat::{self, Builder, Error, View, HEADER, MAGIC};
-use vela_json::strict::StrictParser;
-use vela_json::{corpus, Type};
+use dacodec::flat::{self, Builder, Error, View, HEADER, MAGIC};
+use dacodec::strict::StrictParser;
+use dacodec::{corpus, Type};
 
 fn encode(json: &str) -> Vec<u8> {
     let mut p = StrictParser::new();

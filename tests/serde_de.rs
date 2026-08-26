@@ -6,9 +6,9 @@
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use vela_json::corpus;
-use vela_json::de;
-use vela_json::strict::StrictParser;
+use dacodec::corpus;
+use dacodec::de;
+use dacodec::strict::StrictParser;
 
 /// Round-trip a document through both deserializers and require equality.
 #[track_caller]

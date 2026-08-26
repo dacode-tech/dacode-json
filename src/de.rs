@@ -93,22 +93,27 @@ impl<'de> Deserializer<'de> {
     }
 }
 
-/// Parse with the strict parser and deserialize into `T`.
+/// Parse with the strict parser and deserialize into an owned `T`.
 ///
-/// Allocates a parser per call. For repeated use, keep a
-/// [`crate::strict::StrictParser`] and call
-/// [`from_doc`] on the result.
-pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T>
+/// `T` must be [`serde::de::DeserializeOwned`]: the node pool lives only
+/// for the call, and [`Doc`] ties the input's lifetime to the pool's, so a
+/// borrowing `T` cannot outlive it.
+///
+/// To deserialize a *borrowing* type, keep a
+/// [`crate::strict::StrictParser`] and call [`from_doc`] on its result —
+/// the borrow checker then relates the lifetimes correctly and nothing is
+/// copied.
+///
+/// An earlier version accepted a borrowing `T` by leaking the pool with
+/// `Box::leak`. That is fine in a test and unacceptable in a library: it
+/// leaks on every call.
+pub fn from_slice<T>(input: &[u8]) -> Result<T>
 where
-    T: serde::Deserialize<'de>,
+    T: serde::de::DeserializeOwned,
 {
-    // The pool must outlive the borrow, so this convenience function leaks
-    // the parser's buffers into a box. Callers that care keep their own
-    // parser; this exists for tests and one-shot use.
     let pool = crate::strict::parse_to_pool(input)
         .map_err(|e| Error::new(format!("parse error: {e}")))?;
-    let pool: &'de Pool = Box::leak(Box::new(pool));
-    T::deserialize(Deserializer::from_doc(Doc::new(input, pool)))
+    T::deserialize(Deserializer::from_doc(Doc::new(input, &pool)))
 }
 
 /// Deserialize `T` from an already-parsed document.

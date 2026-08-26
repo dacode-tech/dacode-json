@@ -16,9 +16,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use sonic_rs::{JsonContainerTrait, JsonValueTrait};
-use vela_json::corpus;
-use vela_json::strict::StrictParser;
-use vela_json::Workspace;
+use dacodec::corpus;
+use dacodec::strict::StrictParser;
+use dacodec::Workspace;
 
 const SEED: u64 = 0x9E11;
 
@@ -143,10 +143,10 @@ fn bench_extract_all(c: &mut Criterion) {
                     for (k, v) in rec.entries() {
                         acc += k.len();
                         acc += match v.typ() {
-                            vela_json::Type::String => v.as_str().map_or(0, |s| s.len()),
-                            vela_json::Type::Number => v.as_i64().unwrap_or(0) as usize,
-                            vela_json::Type::Bool => usize::from(v.as_bool() == Some(true)),
-                            vela_json::Type::Array => v.elements().count(),
+                            dacodec::Type::String => v.as_str().map_or(0, |s| s.len()),
+                            dacodec::Type::Number => v.as_i64().unwrap_or(0) as usize,
+                            dacodec::Type::Bool => usize::from(v.as_bool() == Some(true)),
+                            dacodec::Type::Array => v.elements().count(),
                             _ => 0,
                         };
                     }
@@ -165,10 +165,10 @@ fn bench_extract_all(c: &mut Criterion) {
                     for (k, v) in rec.entries() {
                         acc += k.len();
                         acc += match v.typ() {
-                            vela_json::Type::String => v.as_str().map_or(0, |s| s.len()),
-                            vela_json::Type::Number => v.as_i64().unwrap_or(0) as usize,
-                            vela_json::Type::Bool => usize::from(v.as_bool() == Some(true)),
-                            vela_json::Type::Array => v.elements().count(),
+                            dacodec::Type::String => v.as_str().map_or(0, |s| s.len()),
+                            dacodec::Type::Number => v.as_i64().unwrap_or(0) as usize,
+                            dacodec::Type::Bool => usize::from(v.as_bool() == Some(true)),
+                            dacodec::Type::Array => v.elements().count(),
                             _ => 0,
                         };
                     }

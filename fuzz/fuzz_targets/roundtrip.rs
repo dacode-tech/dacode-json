@@ -9,16 +9,16 @@ fuzz_target!(|data: &[u8]| {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(data) else {
         return;
     };
-    let Ok(once) = vela_json::ser::to_vec(&v) else {
+    let Ok(once) = dacodec::ser::to_vec(&v) else {
         return;
     };
     // Our own output must be accepted by our own strict parser.
-    vela_json::strict::validate(&once)
+    dacodec::strict::validate(&once)
         .unwrap_or_else(|e| panic!("emitted invalid JSON: {e}\n{:?}", String::from_utf8_lossy(&once)));
 
     let back: serde_json::Value =
         serde_json::from_slice(&once).expect("our output must re-parse");
-    let twice = vela_json::ser::to_vec(&back).expect("re-serialize");
+    let twice = dacodec::ser::to_vec(&back).expect("re-serialize");
     assert_eq!(
         once,
         twice,

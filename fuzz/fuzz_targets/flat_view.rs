@@ -5,14 +5,14 @@
 //! reader tolerates hostile buffers.
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use vela_json::flat::View;
+use dacodec::flat::View;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(view) = View::new(data) else { return };
     // Deep validation must also be total.
     let _ = view.validate_deep();
 
-    fn walk(r: vela_json::flat::Ref<'_>, depth: u32) {
+    fn walk(r: dacodec::flat::Ref<'_>, depth: u32) {
         if depth > 8 {
             return;
         }

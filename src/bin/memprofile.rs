@@ -37,15 +37,15 @@
 
 use std::env;
 use std::hint::black_box;
-use vela_json::memstat::{human, Snapshot};
-use vela_json::strict::StrictParser;
-use vela_json::{corpus, flat, Workspace};
+use dacodec::memstat::{human, Snapshot};
+use dacodec::strict::StrictParser;
+use dacodec::{corpus, flat, Workspace};
 
 // Counting the Rust side needs a global allocator hook. It adds a couple of
 // relaxed atomics per allocation, which is why this lives in its own binary
 // and not in anything that gets timed.
 #[global_allocator]
-static ALLOC: vela_json::memstat::Counter = vela_json::memstat::Counter;
+static ALLOC: dacodec::memstat::Counter = dacodec::memstat::Counter;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Record {
@@ -58,7 +58,7 @@ struct Record {
     tags: Vec<String>,
 }
 
-vela_json::flat_struct! {
+dacodec::flat_struct! {
     pub struct FlatRecord : FlatRecordFields {
         id: u64,
         age: u32,
@@ -80,6 +80,11 @@ const IMPLS: &[&str] = &[
     "vela_strict",
     "jsonflat_dyn",
     "jsonflat_typed",
+    // Read-only paths: the buffer is built BEFORE the measurement window,
+    // so what is measured is the cost of *using* it, not of making it.
+    "read_jsonflat_typed",
+    "read_jsonflat_dyn",
+    "read_serde_json",
     "serde_json_value",
     "serde_json_structs",
     "simd_json_owned",
@@ -126,13 +131,82 @@ fn main() {
     // measured window.
     black_box(src.iter().map(|b| *b as usize).sum::<usize>());
 
+    // Read-only workloads prepare their buffer here, outside the measured
+    // window: the question they answer is "what does it cost to read data
+    // I already have", so building it must not be charged to them.
+    let prepared: Option<Vec<u8>> = match which {
+        "read_jsonflat_typed" => {
+            let recs: Vec<Record> = serde_json::from_slice(src).expect("valid");
+            let mut w = flat::typed::TypedWriter::<FlatRecord>::new();
+            for r in &recs {
+                w.record()
+                    .u64(r.id)
+                    .u32(r.age)
+                    .bool(r.active)
+                    .i64(r.score)
+                    .str(&r.name)
+                    .str(&r.city)
+                    .str_list(r.tags.iter().map(String::as_str));
+            }
+            Some(w.finish())
+        }
+        "read_jsonflat_dyn" => {
+            let mut p = StrictParser::new();
+            let doc = p.parse(src).expect("valid");
+            Some(flat::encode(doc).expect("encode"))
+        }
+        // To "read" JSON text you must parse it; that is the point.
+        "read_serde_json" => Some(src.to_vec()),
+        _ => None,
+    };
+    if let Some(b) = &prepared {
+        // Make its pages resident before the window opens.
+        black_box(b.iter().map(|x| *x as usize).sum::<usize>());
+    }
+
     // Three snapshots, because an absolute "heap after build" figure
     // over-attributes: freed intermediates sit on the allocator's free
     // lists and are not returned to the OS, so they still inflate the
     // number. Differencing across the drop isolates what the parsed form
     // itself holds.
     let a = Snapshot::now();
-    let (keep, note) = run(which, src);
+    let (keep, note) = match (&prepared, which) {
+        (Some(buf), "read_jsonflat_typed") => {
+            let v = flat::typed::TypedView::<FlatRecord>::new(buf).expect("view");
+            let mut acc = 0usize;
+            for i in 0..v.len() {
+                acc += v.id(i).unwrap_or(0) as usize;
+                acc += v.name(i).map_or(0, str::len);
+                acc += v.city(i).map_or(0, str::len);
+                acc += v.tags(i).into_iter().map(str::len).sum::<usize>();
+            }
+            (Box::new(()) as Keep, format!("read acc={acc}"))
+        }
+        (Some(buf), "read_jsonflat_dyn") => {
+            let v = flat::View::new(buf).expect("view");
+            let mut acc = 0usize;
+            for rec in v.root().elements() {
+                for (k, val) in rec.entries() {
+                    acc += k.len();
+                    acc += val.as_str().map_or(0, str::len);
+                }
+            }
+            (Box::new(()) as Keep, format!("read acc={acc}"))
+        }
+        (Some(buf), "read_serde_json") => {
+            // The honest comparison: to "read" JSON text you must parse it.
+            let v: serde_json::Value = serde_json::from_slice(buf).expect("valid");
+            let mut acc = 0usize;
+            for rec in v.as_array().map(Vec::as_slice).unwrap_or_default() {
+                for (k, val) in rec.as_object().into_iter().flatten() {
+                    acc += k.len();
+                    acc += val.as_str().map_or(0, str::len);
+                }
+            }
+            (Box::new(v) as Keep, format!("read acc={acc}"))
+        }
+        _ => run(which, src),
+    };
     let b = Snapshot::now();
     drop(keep);
     let c = Snapshot::now();
@@ -145,9 +219,13 @@ fn main() {
     // the driver subtracts it. A delta here would miss anything allocated
     // before the first snapshot.
     println!(
-        "{which}\t{corpus_name}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+        "{which}\t{corpus_name}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         src.len(),
         b.rss_peak,
+        // Additional peak caused by the measured work alone. For `read_*`
+        // rows the absolute peak is contaminated by buffer preparation, so
+        // this is the only meaningful RSS figure for them.
+        churn.rss_peak,
         retained,
         b.heap_chunks as i64 - c.heap_chunks as i64,
         churn.rust_allocs,
@@ -217,7 +295,7 @@ fn selftest() {
     #[cfg(feature = "cbench")]
     {
         let a = Snapshot::now();
-        let pool = vela_json::cbench::YyPool::new(N).expect("pool");
+        let pool = dacodec::cbench::YyPool::new(N).expect("pool");
         let b = Snapshot::now();
         drop(pool);
         let c = Snapshot::now();
@@ -243,12 +321,12 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
 
         // --- Vela tiers: navigation only, no persistent structure ---
         "vela_tier1" => {
-            use vela_json::tiers::{tier1::Tier1, JsonTier};
+            use dacodec::tiers::{tier1::Tier1, JsonTier};
             let n = Tier1::array_count(src);
             (Box::new(()), format!("elems={n}"))
         }
         "vela_tier2_tape" => {
-            let mut b = vela_json::tiers::tier2::tape::TapeBuilder::new();
+            let mut b = dacodec::tiers::tier2::tape::TapeBuilder::new();
             let n = b.build(src).len();
             (Box::new(b), format!("tape_entries={n}"))
         }
@@ -300,6 +378,16 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
             (Box::new(buf), format!("buf_bytes={n}"))
         }
 
+        // --- read-only: buffer prepared outside the window ---
+        //
+        // These answer "what does it cost to read data I already have",
+        // which is the question a zero-copy format exists to answer. The
+        // buffer is built before the snapshot and handed in, so only the
+        // reader's own allocation shows up.
+        "read_jsonflat_typed" | "read_jsonflat_dyn" | "read_serde_json" => {
+            unreachable!("handled in main before the measurement window")
+        }
+
         // --- Rust reference libraries ---
         "serde_json_value" => {
             let v: serde_json::Value = serde_json::from_slice(src).expect("valid");
@@ -334,7 +422,7 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         // --- C libraries ---
         #[cfg(feature = "cbench")]
         "yyjson" => {
-            let doc = vela_json::cbench::YyDoc::parse(src).expect("valid");
+            let doc = dacodec::cbench::YyDoc::parse(src).expect("valid");
             let n = doc.value_count();
             (Box::new(doc), format!("values={n}"))
         }
@@ -342,8 +430,8 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         "simdjson_dom" => {
             // The parser retains its tape and string buffer, so what it
             // holds after a parse is its memory cost.
-            let padded = vela_json::cbench::Padded::new(src);
-            let n = vela_json::cbench::SimdJson::parse_dom(&padded);
+            let padded = dacodec::cbench::Padded::new(src);
+            let n = dacodec::cbench::SimdJson::parse_dom(&padded);
             (Box::new(padded), format!("bytes={n}"))
         }
 

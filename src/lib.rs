@@ -1,58 +1,56 @@
-//! A Rust port of Vela stage2's **tier 3** JSON parser.
+//! A fast, allocation-light JSON library for Rust.
 //!
-//! Vela ships four JSON tiers under
-//! `bootstrap/stage2/src/stdlib/encoding/json/`. Tier 3 is the fastest
-//! end-to-end path: a yyjson-style flat 16-byte node pool fed by a
-//! simdjson-style structural index (Vela's own tier 2 Stage 1).
-//! `docs/stage2/JSON_IMPROVEMENT_PLAN.md:52-73` measures the shipped
-//! implementation at 166 MB/s for a full DOM build on a 10 MB corpus, with
-//! Stage 1 alone hitting 914 MB/s — so the DOM builder is the bottleneck,
-//! which is what makes it interesting to re-host on rustc/LLVM.
+//! ```
+//! # use serde::{Serialize, Deserialize};
+//! #[derive(Serialize, Deserialize)]
+//! struct Config { name: String, port: u16 }
 //!
-//! # Two parsers
+//! let cfg: Config = dacodec::from_str(r#"{"name":"edge","port":8080}"#)?;
+//! let json = dacodec::to_string(&cfg)?;
+//! # Ok::<(), dacodec::Error>(())
+//! ```
 //!
-//! * [`Workspace`] — the **faithful** port. Bit-compatible with Vela,
-//!   including every quirk (see below). No validation, no errors.
-//! * [`strict`] — same data structures and same algorithm, but RFC
-//!   8259-conformant: real `f64` numbers, structural validation, and a
-//!   [`strict::Error`] with a byte offset.
+//! For the typed path this is a drop-in replacement for `serde_json`:
+//! change the import and nothing else. Output is byte-identical, and the
+//! parser scores 284/284 on the mandatory JSONTestSuite cases.
 //!
-//! # Faithful-mode quirks
+//! # What is here
 //!
-//! These are all real behaviours of the Vela implementation, reproduced
-//! deliberately. Each is documented at the site that implements it.
-//!
-//! | Quirk | Where |
+//! | | |
 //! |---|---|
-//! | Numbers are `i64`; `3.14` parses as `314`, `1e3` as `13` | [`scalar::parse_number`] |
-//! | `null` is never validated — `nope` parses as null | [`scalar::parse_scalar_fast`] |
-//! | Any unrecognised scalar becomes null | [`scalar::parse_scalar_fast`] |
-//! | Strings are raw slices, never unescaped | [`query::Value::as_raw_str`] |
-//! | Key lookup compares raw (still-escaped) bytes | [`query::Value::get`] |
-//! | Depth past 256 is silently dropped | [`builder`] |
-//! | Closing brackets are not matched against openers | [`builder`] |
-//! | Inputs above `i32::MAX` are rejected | [`scan::MAX_INPUT_LEN`] |
-//! | No errors: malformed input yields a wrong-but-valid pool | [`builder`] |
+//! | [`from_str`], [`to_string`] and friends | the `serde_json`-shaped API |
+//! | [`Parser`] | reusable buffers; no allocation in steady state |
+//! | [`flat`] | a zero-copy wire format — read a field in nanoseconds, no parsing |
+//! | [`tiers`], [`onepass`] | reference implementations, for measurement |
 //!
-//! # Example
+//! # Zero-copy
 //!
-//! ```
-//! use vela_json::Workspace;
+//! [`flat`] stores a document in a self-contained, `mmap`-able buffer.
+//! Opening one is O(1) and reading a field allocates nothing:
 //!
-//! let mut ws = Workspace::new();
-//! let doc = ws.parse(br#"{"name":"vela","tiers":[0,1,2,3]}"#);
+//! | reading a 10.4 MiB document | allocations | bytes |
+//! |---|---|---|
+//! | `flat::typed` | **2** | **36 B** |
+//! | `serde_json` (must parse) | 1 310 661 | 82.99 MiB |
 //!
-//! let root = doc.root();
-//! assert_eq!(root.get("name").and_then(|v| v.as_str()).as_deref(), Some("vela"));
-//! assert_eq!(root.get("tiers").map(|v| v.len()), Some(4));
-//! ```
+//! See `docs/ZEROCOPY.md` and `docs/MEMORY.md`.
+//!
+//! # Origins
+//!
+//! The parser began as a port of the JSON tiers in the
+//! [Vela](https://github.com/) compiler's standard library, themselves
+//! modelled on [yyjson](https://github.com/ibireme/yyjson) (a flat node
+//! pool) and [simdjson](https://github.com/simdjson/simdjson) (a SIMD
+//! structural index). Those ports are kept in [`tiers`] and are measured
+//! against the C originals in `docs/CBASELINE.md`; the shipping parser is
+//! [`strict`], which adds RFC 8259 validation and correctly-rounded
+//! numbers.
 //!
 //! # Panics
 //!
-//! The faithful parser contains no `unwrap`, `expect`, `panic!` or slice
-//! indexing on any path reachable from [`Workspace::parse`]. Malformed input
-//! cannot panic it. See `docs/UNWRAP_FREE.md` in the repository for how far
-//! that idea generalises.
+//! There are none. No `unwrap`, `expect`, `panic!` or slice indexing exists
+//! on any path reachable from the public API, enforced by `clippy::deny`
+//! and checked by fuzzing. See `docs/UNWRAP_FREE.md`.
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(missing_debug_implementations, rust_2018_idioms)]
@@ -101,6 +99,12 @@ pub mod strict;
 pub mod tiers;
 pub mod unescape;
 pub mod workspace;
+
+pub mod api;
+pub use api::{
+    from_reader, from_slice, from_str, to_string, to_vec, to_writer, validate, Document,
+    Error, Parser, Result, ValueRef,
+};
 
 pub use pool::{Node, Pool};
 pub use query::{Doc, Value};

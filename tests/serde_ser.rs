@@ -8,9 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use vela_json::corpus;
-use vela_json::ser::{self, Options};
-use vela_json::{de, strict::StrictParser};
+use dacodec::corpus;
+use dacodec::ser::{self, Options};
+use dacodec::{de, strict::StrictParser};
 
 /// Byte-for-byte equality with `serde_json::to_string`.
 #[track_caller]

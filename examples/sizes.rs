@@ -1,7 +1,7 @@
 //! Buffer sizes for each jsonflat configuration, against JSON and rkyv.
-use vela_json::flat::{Builder, Intern};
-use vela_json::strict::StrictParser;
-use vela_json::corpus;
+use dacodec::flat::{Builder, Intern};
+use dacodec::strict::StrictParser;
+use dacodec::corpus;
 
 fn main() {
     for (name, json) in corpus::suite(1 << 20, 0x2C0) {
