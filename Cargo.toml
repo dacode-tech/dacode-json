@@ -59,8 +59,18 @@ profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 # default: simdjson's amalgamation is 2.7 MB of C++17 and takes ~30s.
 cbench = []
 # Differential fuzzing harness (src/fuzz.rs). Needs serde_json to compare
-# against, so it rides on the `profiling` feature's dependency set.
-fuzzing = ["profiling"]
+# against, so it rides on the `profiling` feature's dependency set, and it
+# cross-checks the reference tiers, so it needs those too.
+fuzzing = ["profiling", "vela-compat"]
+# The Vela tier ports and the single-pass builder (`tiers`, `onepass`).
+#
+# These are reference implementations kept for measurement, NOT for use:
+# they do not validate (tier1 returns the correct verdict on 50.7% of the
+# JSONTestSuite cases, tier2 on 62.7%) and they truncate floats, so `3.14`
+# parses as the integer 314. That is Vela's behaviour, reproduced
+# faithfully on purpose. Off by default so nobody reaches for `tier1`
+# because it benchmarks well.
+vela-compat = []
 
 [profile.release]
 opt-level = 3
@@ -77,6 +87,14 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 debug = true
+
+[[test]]
+name = "tier_contract"
+required-features = ["vela-compat"]
+
+[[test]]
+name = "onepass"
+required-features = ["vela-compat"]
 
 [[bench]]
 name = "parse"
@@ -105,6 +123,7 @@ harness = false
 [[bench]]
 name = "tiers"
 harness = false
+required-features = ["vela-compat"]
 
 [[bench]]
 name = "cbaseline"

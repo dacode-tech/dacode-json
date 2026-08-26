@@ -214,11 +214,16 @@ buffer. A README example that does not compile is worse than none.
 ## Running the tests
 
 ```bash
-cargo test                      # 262 tests
-cargo test --features fuzzing   # + the bounded fuzzer
-cargo test --all-features       # + the C baselines (needs a C/C++ compiler)
-cargo clippy --lib --all-targets
+cargo test                       # 202 tests
+cargo test --features vela-compat  # + the reference tiers          (260)
+cargo test --features fuzzing    # + the bounded fuzzer             (262)
+cargo test --all-features        # + the C baselines (needs a C/C++ compiler)
+cargo test --doc                 # the examples in the API docs
+cargo run --example readme       # the examples on this page
+cargo clippy --all-targets
 ```
+
+Clippy is clean at every feature combination, not just the default one.
 
 What is covered:
 
@@ -229,7 +234,7 @@ What is covered:
 | `serde_de.rs` / `serde_ser.rs` | differential against `serde_json`, byte-identical output |
 | `flat.rs` / `flat_typed.rs` | round-trip plus 40 000 corrupted buffers |
 | `onepass.rs` | two independent parsers must produce identical output |
-| `tier_contract.rs` | the reference implementations against each other |
+| `tier_contract.rs` | the reference implementations against each other (`vela-compat`) |
 | `fuzz_bounded.rs` | a deterministic slice of the mutation fuzzer |
 
 Test data under `testdata/` is vendored with provenance and licences — see
@@ -349,9 +354,24 @@ high-precision literals it deviates on 17.7%, by up to 2 ULP.
 | feature | default | what |
 |---|---|---|
 | `serde` | ✅ | the public API; without it only the low-level parser is available |
-| `fuzzing` | | the differential fuzz harness |
+| `vela-compat` | | the Vela tier ports (`tiers`, `onepass`) — see below |
+| `fuzzing` | | the differential fuzz harness (implies `vela-compat`) |
 | `cbench` | | vendored yyjson and simdjson, for benchmarking (needs a C/C++ compiler) |
 | `profiling` | | the CPU and memory profiling binaries |
+
+### A warning about `vela-compat`
+
+That feature exposes the original Vela tier ports. They are kept for
+measurement and are **not usable as parsers**: they do not validate (tier 1
+returns the correct accept/reject verdict on 50.7% of the JSONTestSuite
+cases, tier 2 on 62.7%) and they truncate floats, so `3.14` parses as the
+integer `314`.
+
+That is Vela's behaviour, reproduced deliberately so the comparison in
+[`docs/CBASELINE.md`](docs/CBASELINE.md) is honest. It is off by default
+because those tiers benchmark faster than the real parser, and a fast
+number next to a familiar name is exactly how someone ends up shipping a
+parser that accepts truncated input.
 
 ---
 
@@ -374,8 +394,8 @@ high-precision literals it deviates on 17.7%, by up to 2 ULP.
 The parser began as a port of the JSON tiers in the Vela compiler's standard
 library, themselves modelled on [yyjson](https://github.com/ibireme/yyjson)
 (a flat node pool) and [simdjson](https://github.com/simdjson/simdjson) (a
-SIMD structural index). Those ports are still here under `tiers` and are
-measured against the C originals in
+SIMD structural index). Those ports are still here behind `vela-compat` and
+are measured against the C originals in
 [`docs/CBASELINE.md`](docs/CBASELINE.md) — yyjson remains 1.36× ahead on
 DOM construction, and this crate is 2.8× ahead of it on string-heavy data
 because it never decodes a string until asked.

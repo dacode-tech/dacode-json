@@ -21,7 +21,7 @@
 //! | [`from_str`], [`to_string`] and friends | the `serde_json`-shaped API |
 //! | [`Parser`] | reusable buffers; no allocation in steady state |
 //! | [`flat`] | a zero-copy wire format — read a field in nanoseconds, no parsing |
-//! | [`tiers`], [`onepass`] | reference implementations, for measurement |
+//! | `tiers`, `onepass` | reference implementations, for measurement (`vela-compat` feature) |
 //!
 //! # Zero-copy
 //!
@@ -41,7 +41,7 @@
 //! [Vela](https://github.com/) compiler's standard library, themselves
 //! modelled on [yyjson](https://github.com/ibireme/yyjson) (a flat node
 //! pool) and [simdjson](https://github.com/simdjson/simdjson) (a SIMD
-//! structural index). Those ports are kept in [`tiers`] and are measured
+//! structural index). Those ports are kept behind `vela-compat` and measured
 //! against the C originals in `docs/CBASELINE.md`; the shipping parser is
 //! [`strict`], which adds RFC 8259 validation and correctly-rounded
 //! numbers.
@@ -90,12 +90,24 @@ pub mod flat;
 pub mod de;
 #[cfg(feature = "serde")]
 pub mod ser;
+/// Vela's single-pass builder. Requires the `vela-compat` feature.
+///
+/// A reference implementation, not the recommended parser: it does not
+/// validate and truncates floats. Use [`strict`] or the crate root.
+#[cfg(feature = "vela-compat")]
 pub mod onepass;
 pub mod pool;
 pub mod query;
 pub mod scalar;
 pub mod scan;
 pub mod strict;
+/// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`
+/// feature.
+///
+/// Reference implementations kept for measurement. They do not validate
+/// and they truncate floats, because Vela's do. Use [`strict`] or the
+/// crate root for anything real; see `docs/TIERS.md`.
+#[cfg(feature = "vela-compat")]
 pub mod tiers;
 pub mod unescape;
 pub mod workspace;

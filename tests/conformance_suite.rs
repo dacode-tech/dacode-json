@@ -20,7 +20,6 @@
 //! recorded rather than asserted, so the suite documents the gap instead of
 //! hiding it.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use dacodec::strict;
@@ -395,9 +394,11 @@ fn real_literals_match_serde_json() {
 /// The faithful tier-3 port and tiers 0–2 do not validate. This records how
 /// far off they are rather than asserting anything, so the gap is visible
 /// and tracked.
+#[cfg(feature = "vela-compat")]
 #[test]
 fn non_validating_parsers_scored_against_the_suite() {
     use dacodec::tiers::{tier1::Tier1, tier2::Tier2, tier3::Tier3, JsonTier};
+    use std::collections::BTreeMap;
 
     let cases: Vec<(String, Vec<u8>, bool)> = load_dir("test_parsing")
         .into_iter()

@@ -215,6 +215,13 @@ fn bench_floor(c: &mut Criterion) {
 /// `indexed_full` is Stage 1 + Stage 2 with all buffers reused — the
 /// fastest form of the two-stage path. `onepass` reads the document once.
 /// Both produce a byte-identical pool (`tests/onepass.rs`).
+/// Without `vela-compat` the single-pass builder is not compiled in, so
+/// this group is empty rather than absent - keeps the criterion group list
+/// stable across feature sets.
+#[cfg(not(feature = "vela-compat"))]
+fn bench_onepass(_c: &mut Criterion) {}
+
+#[cfg(feature = "vela-compat")]
 fn bench_onepass(c: &mut Criterion) {
     use dacodec::{onepass::OnePass, Workspace};
 
