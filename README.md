@@ -222,6 +222,7 @@ tests/
   faithful_semantics.rs    quirks pinned + panic freedom
   conformance_suite.rs     JSONTestSuite + JSON_checker, vendored in testdata/
   strict_conformance.rs    hand-written cases + serde_json differential
+  edge_cases.rs            encoding/whitespace/number/string/structure edges
   fuzz_bounded.rs          CI slice of the mutation fuzzer
   serde_de.rs              deserializer vs serde_json
   serde_ser.rs             serializer, byte-identical to serde_json
@@ -244,7 +245,7 @@ tools/
 ## Running
 
 ```bash
-cargo test                          # 226 tests
+cargo test                          # 252 tests
 cargo test --features fuzzing       # + the bounded fuzzer
 cargo run --release --features fuzzing --bin fuzz   # mutation fuzzer
 cargo bench --bench tiers           # all four Vela tiers head-to-head
