@@ -320,11 +320,13 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         "baseline" => (Box::new(()), "floor".to_string()),
 
         // --- Vela tiers: navigation only, no persistent structure ---
+        #[cfg(feature = "vela-compat")]
         "vela_tier1" => {
             use dacodec::tiers::{tier1::Tier1, JsonTier};
             let n = Tier1::array_count(src);
             (Box::new(()), format!("elems={n}"))
         }
+        #[cfg(feature = "vela-compat")]
         "vela_tier2_tape" => {
             let mut b = dacodec::tiers::tier2::tape::TapeBuilder::new();
             let n = b.build(src).len();

@@ -438,6 +438,64 @@ This is the mirror image of §3, where the same representation beat
 everything on string-heavy DOM construction. A tape is the right shape for
 "parse once, query repeatedly" and the wrong shape for "parse once, discard".
 
+### Removing the pool: `src/stream.rs`
+
+The obvious response is to stop building the intermediate. `src/stream.rs`
+keeps Stage 1 (the structural index) and decodes straight into serde
+visitors — the shape of simdjson's On-Demand API. Throughput, 4 MiB,
+isolated:
+
+| | pool | **stream** | serde_json | sonic-rs | change |
+|---|---|---|---|---|---|
+| owned `Vec<Record>` | 200 | **263** | 294 | 377 | +31% |
+| borrowed `Vec<RecordRef>` | 223 | **320** | 326 | 436 | +43% |
+| partial, 2 of 7 fields | 268 | **432** | 528 | 555 | +61% |
+
+It closes 60–70% of the gap and reaches parity on the borrowed path
+(320 vs 326), but **does not overtake `serde_json`**. Removing the
+intermediate was necessary and not sufficient.
+
+What remains is structural. Stage 1 costs 13.1% of streaming
+deserialization (`write_bits` 10.0%, `scan_into` 3.1%) and `serde_json`
+pays nothing equivalent: it finds delimiters with scalar code as it goes,
+and never pays for the ones it skips. The index has to earn back 13% before
+it wins anything, and on this workload it does not.
+
+It is also more accurate than the pool. `10000000000000000999` has 20
+digits, so it exceeds the pool's `i64` fast path and is stored as `f64`,
+coming back as `1e19`; the streaming parser keeps it as an exact `u64`, as
+`serde_json` does. Pinned by
+`tests/stream.rs::keeps_integer_precision_that_the_pool_loses`.
+
+`dacodec::from_slice` now uses this path. `Parser`/`Doc` still build a pool,
+which is the right structure for querying rather than converting.
+
+### Two more optimisations that did not work
+
+Both were predicted by the profile and both changed nothing, which brings
+the tally to **six failed, two successful** (§12).
+
+**Skip without converting.** Deserializing 2 of 7 fields, the ignored five
+were being fully materialised — floats parsed, `String`s built — and then
+discarded. Splitting number *validation* from number *conversion* so that a
+skipped field only pays for the syntax check moved 4 MiB partial
+deserialization from 436 to 432 MiB/s: nothing. The skipped fields on this
+corpus are mostly strings, whose cost is the scan that correctness requires
+anyway, not the conversion that was removed.
+
+**Fusing the control-byte check.** RFC 8259 forbids raw bytes below 0x20 in
+a string. Adding that as its own pass put `no_control_bytes` at **9.9%** of
+self time in the profile — the third-largest entry. Folding the test into
+the loop in `unescape` that already scans for backslashes and non-ASCII, so
+it costs one more compare per byte instead of a second traversal, moved
+throughput from 268 to 263 MiB/s: nothing, or slightly worse.
+
+The lesson from §12 holds. A profiler attributes *self time*, and after
+`lto="fat"` with `codegen-units=1` that attribution says little about what
+removing the work would cost. A tight byte loop that vectorises is cheap
+per byte however large its share of samples looks, and adding a lane to it
+is not free. Only a measurement of the whole pipeline settles it.
+
 ### Partial deserialization (2 of 7 fields) — MiB/s, 4 MiB
 
 | | |

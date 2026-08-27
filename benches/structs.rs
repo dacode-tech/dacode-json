@@ -105,6 +105,16 @@ fn bench_deserialize_owned(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(BenchmarkId::new("dacodec_stream", name), bytes, |b, bytes| {
+            let mut idx = dacodec::stream::Index::default();
+            idx.reserve_for(bytes.len());
+            b.iter(|| {
+                let v: Vec<Record> =
+                    dacodec::stream::from_slice_with(&mut idx, black_box(bytes)).expect("de");
+                black_box(v)
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json", name), bytes, |b, bytes| {
             b.iter(|| {
                 let v: Vec<Record> = serde_json::from_slice(black_box(bytes)).expect("de");
@@ -152,6 +162,16 @@ fn bench_deserialize_borrowed(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(BenchmarkId::new("dacodec_stream", name), bytes, |b, bytes| {
+            let mut idx = dacodec::stream::Index::default();
+            idx.reserve_for(bytes.len());
+            b.iter(|| {
+                let v: Vec<RecordRef<'_>> =
+                    dacodec::stream::from_slice_with(&mut idx, black_box(bytes)).expect("de");
+                black_box(v.len())
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json", name), bytes, |b, bytes| {
             b.iter(|| {
                 let v: Vec<RecordRef<'_>> = serde_json::from_slice(black_box(bytes)).expect("de");
@@ -184,6 +204,16 @@ fn bench_deserialize_partial(c: &mut Criterion) {
             b.iter(|| {
                 let doc = p.parse(black_box(bytes)).expect("valid");
                 let v: Vec<RecordPartial> = de::from_doc(doc).expect("de");
+                black_box(v.len())
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("dacodec_stream", name), bytes, |b, bytes| {
+            let mut idx = dacodec::stream::Index::default();
+            idx.reserve_for(bytes.len());
+            b.iter(|| {
+                let v: Vec<RecordPartial> =
+                    dacodec::stream::from_slice_with(&mut idx, black_box(bytes)).expect("de");
                 black_box(v.len())
             });
         });

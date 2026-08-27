@@ -17,14 +17,36 @@ use std::borrow::Cow;
 /// escape. Borrows when there is no backslash to process.
 #[must_use]
 pub fn unescape(raw: &[u8]) -> Option<Cow<'_, str>> {
-    // One pass answers both questions. The obvious spelling —
+    unescape_inner(raw, false)
+}
+
+/// Like [`unescape`], but also rejects the raw control bytes (below 0x20)
+/// that RFC 8259 forbids inside a string.
+///
+/// The check rides along in the pass that already looks for backslashes
+/// and non-ASCII, so it costs one more compare per byte instead of a
+/// second traversal. Done as a separate pass it measured **9.9%** of
+/// streaming deserialization — see `docs/PROFILING.md`.
+#[must_use]
+pub fn unescape_checked(raw: &[u8]) -> Option<Cow<'_, str>> {
+    unescape_inner(raw, true)
+}
+
+#[inline]
+fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<Cow<'_, str>> {
+    // One pass answers every question. The obvious spelling —
     // `raw.contains(&b'\\')` then `str::from_utf8(raw)` — walks the string
     // twice, and this runs once per string field during deserialization.
     let mut backslash = 0u8;
     let mut high = 0u8;
+    let mut ctrl = 0u8;
     for &b in raw {
         backslash |= u8::from(b == b'\\');
         high |= b;
+        ctrl |= u8::from(b < 0x20);
+    }
+    if reject_control && ctrl != 0 {
+        return None;
     }
 
     if backslash == 0 {

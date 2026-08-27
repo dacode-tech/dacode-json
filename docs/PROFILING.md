@@ -154,6 +154,28 @@ built the way it is.
 backslash scan and the UTF-8 check into one pass. Before that it was two
 passes per string field.
 
+### `stream_de` — deserialize into `Vec<Record>`, no pool (263 MiB/s)
+
+| share | function |
+|---|---|
+| 19.9% | `stream::ValueDe::deserialize_any` |
+| 10.0% | `scan::StructuralIndex::write_bits` |
+| **9.9%** | **`stream::no_control_bytes`** |
+| 8.4% | `unescape::unescape` |
+| 3.6% | `stream::parse_number` |
+| 3.1% | `scan::scan_into` |
+
+Stage 2 is gone: no `State::gap`, no `skip_subtree`, no pool write. What is
+left is the walk itself, Stage 1 at 13.1%, and two passes over every
+string.
+
+The 9.9% on `no_control_bytes` looked like the obvious next win, so the
+check was folded into the pass in `unescape` that already scans for
+backslashes and non-ASCII. **Throughput did not move** (268 → 263 MiB/s).
+See `docs/RESULTS.md` — this is the sixth optimisation this profile
+predicted and measurement rejected. Self time in a fully-inlined build
+indicates where samples land, not what removing the work is worth.
+
 ### `serde_json_de` — same output (293 MiB/s)
 
 | share | function |

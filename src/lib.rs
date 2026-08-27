@@ -80,7 +80,10 @@
 
 #[cfg(feature = "cbench")]
 pub mod cbench;
-#[cfg(feature = "profiling")]
+// `fuzz` cross-checks the reference tiers, so it needs `vela-compat`,
+// which `fuzzing` pulls in. Gating it on `profiling` alone broke
+// `--features profiling` once the tiers became optional.
+#[cfg(feature = "fuzzing")]
 pub mod fuzz;
 pub mod builder;
 pub mod corpus;
@@ -100,6 +103,7 @@ pub mod pool;
 pub mod query;
 pub mod scalar;
 pub mod scan;
+pub mod stream;
 pub mod strict;
 /// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`
 /// feature.

@@ -96,6 +96,15 @@ fn main() {
                 black_box(v.len());
             }
         }
+        "stream_de" => {
+            let mut idx = dacodec::stream::Index::default();
+            idx.reserve_for(bytes.len());
+            for _ in 0..iters {
+                let v: Vec<Record> =
+                    dacodec::stream::from_slice_with(&mut idx, bytes).expect("de");
+                black_box(v.len());
+            }
+        }
         "vela_ser" => {
             let data: Vec<Record> = serde_json::from_slice(bytes).expect("parse");
             let mut out = Vec::with_capacity(bytes.len() + 64);

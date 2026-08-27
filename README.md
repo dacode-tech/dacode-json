@@ -32,16 +32,20 @@ byte-identical, verified over the whole test corpus.
 | validate, 1 MiB | **2.47 ms** | 7.22 ms |
 | string escaping, clean text | **9.24 GiB/s** | 2.19 GiB/s |
 | DOM memory, 10 MiB | **43.4 MiB** | 97.1 MiB |
-| deserialize to structs, 4 MiB | 194 MiB/s | **293 MiB/s** |
+| deserialize to structs, 4 MiB | 263 MiB/s | **294 MiB/s** |
+| deserialize borrowing structs | 320 MiB/s | 326 MiB/s |
+| deserialize 2 of 7 fields | 432 MiB/s | **528 MiB/s** |
 | serialize from structs, 4 MiB | 717 MiB/s | **761 MiB/s** |
 | RFC 8259 (JSONTestSuite) | 284/284 | 284/284 |
 | float parsing | correctly rounded | off by ≤2 ULP on 17.7% of high-precision literals |
 
-Read that table honestly: **`serde_json` is faster at struct
-deserialization, and at serialization.** It is a single-pass streaming
-deserializer that never builds an intermediate, and for "parse into a struct
-once, throw the text away" that is the better architecture. `sonic-rs` beats
-both. If that is your whole workload, keep what you have.
+Read that table honestly: **`serde_json` is still faster at struct
+deserialization, and at serialization.** `dacodec` decodes straight into
+the target type without an intermediate (`dacodec::stream`), which closed
+60–70% of a gap that used to be 194 vs 293 and reaches parity on the
+borrowing path — but it does not overtake. `sonic-rs` beats both. If
+"parse into a struct once, throw the text away" is your whole workload,
+keep what you have.
 
 dacodec wins where a document is *inspected* rather than converted: DOM
 construction (3.2×), validation (2.9×), escaping (4.2×), memory (2.2×) —
@@ -234,6 +238,7 @@ What is covered:
 | `serde_de.rs` / `serde_ser.rs` | differential against `serde_json`, byte-identical output |
 | `flat.rs` / `flat_typed.rs` | round-trip plus 40 000 corrupted buffers |
 | `onepass.rs` | two independent parsers must produce identical output |
+| `stream.rs` | the streaming deserializer against `serde_json` and the pool, on all 351 corpus files |
 | `tier_contract.rs` | the reference implementations against each other (`vela-compat`) |
 | `fuzz_bounded.rs` | a deterministic slice of the mutation fuzzer |
 
@@ -343,6 +348,9 @@ resets.
 **Correctly-rounded floats.** Every literal parses to the same `f64` as
 `str::parse`. `serde_json`'s default parser does not — measured over 200 000
 high-precision literals it deviates on 17.7%, by up to 2 ULP.
+
+**Exact integers.** Values up to `u64::MAX` keep every digit, including the
+20-digit ones that do not fit `i64`.
 
 **Unsafe.** Six blocks, all in SIMD kernels or one `Vec::set_len` after a
 `reserve`, each with a `SAFETY` comment stating the invariant.

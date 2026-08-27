@@ -42,6 +42,16 @@ pub enum Finding {
     RoundTripMismatch { before: String, after: String },
     /// A `jsonflat` buffer did not read back as the document it encoded.
     FlatMismatch(String),
+    /// The streaming deserializer disagreed with `serde_json` about
+    /// validity. This is the property most at risk in `src/stream.rs`:
+    /// it skips values rather than materialising them, so an acceptance
+    /// hole would show up here first.
+    StreamValidityMismatch { ours: bool, theirs: bool },
+    /// Streaming and `serde_json` both accepted, but produced different
+    /// values.
+    StreamValueMismatch { ours: String, theirs: String },
+    /// The streaming and pool deserializers disagreed.
+    StreamPoolMismatch { stream: String, pool: String },
 }
 
 /// Run every property against one input.
@@ -57,6 +67,22 @@ pub fn check(data: &[u8]) -> Vec<Finding> {
 
     let ours = crate::strict::validate(data);
     let theirs = serde_json::from_slice::<serde_json::Value>(data);
+
+    // --- the streaming deserializer, checked independently of the pool ---
+    let stream = crate::stream::from_slice::<serde_json::Value>(data);
+    if stream.is_ok() != theirs.is_ok() {
+        out.push(Finding::StreamValidityMismatch {
+            ours: stream.is_ok(),
+            theirs: theirs.is_ok(),
+        });
+    } else if let (Ok(a), Ok(b)) = (stream.as_ref(), theirs.as_ref()) {
+        if !values_match(a, b) {
+            out.push(Finding::StreamValueMismatch {
+                ours: a.to_string(),
+                theirs: b.to_string(),
+            });
+        }
+    }
 
     if ours.is_ok() != theirs.is_ok() {
         out.push(Finding::ValidityMismatch {
@@ -91,6 +117,16 @@ pub fn check(data: &[u8]) -> Vec<Finding> {
             ours: got.to_string(),
             theirs: expect.to_string(),
         });
+    }
+
+    // The two of ours must also agree with each other.
+    if let Ok(sv) = stream.as_ref() {
+        if !values_match(sv, &got) {
+            out.push(Finding::StreamPoolMismatch {
+                stream: sv.to_string(),
+                pool: got.to_string(),
+            });
+        }
     }
 
     // --- the two builders must agree, byte for byte ---
@@ -186,6 +222,8 @@ fn exercise_all(data: &[u8]) {
     }
 
     black_box(crate::onepass::parse_to_pool(data).len());
+    // The streaming deserializer must survive arbitrary bytes too.
+    black_box(crate::stream::from_slice::<serde_json::Value>(data).is_ok());
     black_box(crate::strict::validate(data).is_ok());
 }
 
