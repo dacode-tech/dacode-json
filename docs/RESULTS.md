@@ -519,6 +519,62 @@ makes `Box<[T]>` conversion free (`docs/MEMORY.md` §5) — with an exact
 hint there is no slack for `into_boxed_slice` to shed. `direct` shows
 `serde_json`'s +80 202 allocations on the boxed struct; `stream` does not.
 
+### Copying sonic-rs, and why most of it did not apply
+
+sonic-rs is 22% ahead on owned structs, so its source (0.5.8) was read to
+find out how. Six techniques, verified in the code:
+
+1. **It never leaves the bitmask domain.** Every operation is a `u64` mask
+   over 64 input bytes. Skipping a container is `count_ones` and
+   `trailing_zeros` on brace masks (`skip_container_loop`, parser.rs:171) —
+   no byte is touched individually. **We compute the same masks and then
+   materialise them into a `Vec<u32>` of positions**, which is `write_bits`,
+   10% of the streaming profile, plus 4 bytes per structural character.
+2. **`prefix_xor`** — a six-step shift-XOR ladder turning a quote mask into
+   an in-string mask, so `& !instring` removes braces inside strings with no
+   branching. They avoid PMULL on aarch64: "apparently slow".
+3. **A cached whitespace bitmap**, reused across calls while the cursor
+   stays inside the same 64 bytes.
+4. **simdutf8** for UTF-8 validation — the 22.2% `serde_json` spends in
+   `core::str::from_utf8`.
+5. **236 `unsafe` blocks**, eliminating bounds checks throughout the parser.
+6. **Deliberate over-reading**, guarded by a 4 KiB page-boundary check, and
+   only on Linux and macOS.
+
+Measuring the corpus before copying any of it was the useful step:
+
+| | `records` |
+|---|---|
+| whitespace | **0%** |
+| mean bytes between quotes | **4.8** |
+
+So (3) is worthless here — there is no whitespace to skip — and (1) applied
+to string scanning would be actively harmful: loading and masking 64 bytes
+to find a terminator 4.8 bytes away is waste, and the existing 8-byte SWAR
+already overshoots. Neither was implemented.
+
+What the measurement *did* show is that every string was scanned twice:
+once to find the closing quote, once in `unescape_checked` to validate
+escapes, control bytes and UTF-8. At 4.8 bytes a string the second pass is
+mostly call overhead. Fusing them — the SWAR loop now also reports whether
+the content is plain printable ASCII, in the same pass — gives:
+
+| 4 MiB | before | after | serde_json | sonic-rs |
+|---|---|---|---|---|
+| owned | 309 | 312 | 293 | 378 |
+| borrowed | 362 | 352 | 337 | 444 |
+| partial, 2 of 7 | 503 | **561** | 530 | 543 |
+
+**Neutral where the string is wanted, +11.5% where it is skipped** — and
+partial deserialization goes from our weakest case to the fastest measured,
+ahead of both `serde_json` and sonic-rs. That is exactly the shape the
+change predicts: if you need the string you must look at its bytes either
+way, but validating a string you are about to discard was pure waste.
+
+No `unsafe` was added. The simple path calls `str::from_utf8` rather than
+asserting the ASCII property it just proved; std's ASCII path is a word at
+a time, and the measurement above already includes that cost.
+
 ### A pool bug the cross-checks found
 
 Adding `direct` meant the fuzzer compared three implementations instead of

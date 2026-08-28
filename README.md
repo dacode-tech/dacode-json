@@ -32,18 +32,19 @@ byte-identical, verified over the whole test corpus.
 | validate, 1 MiB | **2.47 ms** | 7.22 ms |
 | string escaping, clean text | **9.24 GiB/s** | 2.19 GiB/s |
 | DOM memory, 10 MiB | **43.4 MiB** | 97.1 MiB |
-| deserialize to structs, 4 MiB | **309 MiB/s** | 298 MiB/s |
-| deserialize borrowing structs | **362 MiB/s** | 330 MiB/s |
-| deserialize 2 of 7 fields | 503 MiB/s | **529 MiB/s** |
+| deserialize to structs, 4 MiB | **312 MiB/s** | 293 MiB/s |
+| deserialize borrowing structs | **352 MiB/s** | 337 MiB/s |
+| deserialize 2 of 7 fields | **561 MiB/s** | 530 MiB/s |
 | serialize from structs, 4 MiB | 717 MiB/s | **761 MiB/s** |
 | RFC 8259 (JSONTestSuite) | 284/284 | 284/284 |
 | float parsing | correctly rounded | off by ≤2 ULP on 17.7% of high-precision literals |
 
-Read that table honestly. `dacodec` now edges ahead of `serde_json` on
-struct deserialization, by 4% owned and 10% borrowing, and uses the same
-memory to the allocation. It is still **behind on partial
-deserialization and on serialization**, and `sonic-rs` beats both
-everywhere. Those margins are small; pick on features, not on 4%.
+Read that table honestly. `dacodec` edges ahead of `serde_json` on
+deserialization — 6% owned, 4% borrowing, 6% skipping most fields — and
+uses the same memory to the allocation. It is still **behind on
+serialization**, and `sonic-rs` is well ahead on the first two (378 and
+444 MiB/s) by spending 236 `unsafe` blocks to get there. Single-digit
+margins on one corpus and one machine: pick on features, not on 6%.
 
 dacodec wins where a document is *inspected* rather than converted: DOM
 construction (3.2×), validation (2.9×), escaping (4.2×), memory (2.2×) —

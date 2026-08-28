@@ -59,40 +59,6 @@ fn zero_bytes(v: u64) -> u64 {
     v.wrapping_sub(LO) & !v & HI
 }
 
-/// Index of the first `"` or `\` at or after `from`, or `input.len()`.
-///
-/// Eight bytes per iteration. Control bytes are not looked for here:
-/// `unescape_checked` rejects them when the string is decoded, and adding
-/// a third comparison to this loop measurably slowed it down.
-#[inline]
-fn find_quote_or_escape(input: &[u8], from: usize) -> usize {
-    let n = input.len();
-    let mut i = from;
-    const QUOTES: u64 = LO * b'"' as u64;
-    const SLASHES: u64 = LO * b'\\' as u64;
-
-    while i + 8 <= n {
-        let Some(bytes) = input.get(i..i + 8) else {
-            break;
-        };
-        let Ok(arr) = <[u8; 8]>::try_from(bytes) else {
-            break;
-        };
-        let chunk = u64::from_le_bytes(arr);
-        let mask = zero_bytes(chunk ^ QUOTES) | zero_bytes(chunk ^ SLASHES);
-        if mask != 0 {
-            return i + (mask.trailing_zeros() / 8) as usize;
-        }
-        i += 8;
-    }
-    while let Some(&b) = input.get(i) {
-        if b == b'"' || b == b'\\' {
-            return i;
-        }
-        i += 1;
-    }
-    n
-}
 
 // =====================================================================
 // Cursor
@@ -135,29 +101,95 @@ impl<'de> Cursor<'de> {
 
     /// Consume a string, `self.pos` sitting on the opening quote.
     ///
-    /// Returns the raw bytes between the quotes, still escaped.
-    fn scan_string(&mut self) -> Result<&'de [u8]> {
+    /// Returns the raw bytes between the quotes, still escaped, and
+    /// whether the content is *simple*: no backslash, no byte below 0x20,
+    /// no byte at or above 0x80. A simple string needs no unescaping and
+    /// is ASCII, so it is valid UTF-8 by construction.
+    ///
+    /// Finding the terminator and deciding simplicity happen in the same
+    /// pass. Doing them separately meant every string was scanned twice —
+    /// once here, once in `unescape_checked` — and on this corpus strings
+    /// average 4.8 bytes, so a second traversal is mostly call overhead.
+    fn scan_string(&mut self) -> Result<(&'de [u8], bool)> {
         let open = self.pos;
         if !self.eat(b'"') {
             return Err(err(open, "expected a string"));
         }
         let start = self.pos;
+        let n = self.input.len();
         let mut i = start;
+        let mut simple = true;
+        const QUOTES: u64 = LO * b'"' as u64;
+        const SLASHES: u64 = LO * b'\\' as u64;
+
         loop {
-            i = find_quote_or_escape(self.input, i);
-            match self.input.get(i) {
-                Some(b'"') => {
-                    self.pos = i + 1;
-                    return self
-                        .input
-                        .get(start..i)
-                        .ok_or_else(|| err(open, "unterminated string"));
+            while i + 8 <= n {
+                let Some(arr) = self
+                    .input
+                    .get(i..i + 8)
+                    .and_then(|s| <[u8; 8]>::try_from(s).ok())
+                else {
+                    break;
+                };
+                let chunk = u64::from_le_bytes(arr);
+                let term = zero_bytes(chunk ^ QUOTES) | zero_bytes(chunk ^ SLASHES);
+                // High bit set on any byte >= 0x80, or any byte < 0x20.
+                // The second test borrows incorrectly in the presence of
+                // high bytes, which does not matter: either way the byte
+                // is not simple.
+                let odd = (chunk & HI) | (chunk.wrapping_sub(LO * 0x20) & !chunk & HI);
+
+                if term == 0 {
+                    simple &= odd == 0;
+                    i += 8;
+                    continue;
                 }
-                // Skip the escaped byte and keep going. A trailing
-                // backslash runs off the end and is caught below.
-                Some(b'\\') => i += 2,
-                _ => return Err(err(open, "unterminated string")),
+                let bit = term.trailing_zeros();
+                let at = i + (bit / 8) as usize;
+                // Only bytes before the terminator count.
+                let before = if bit == 0 { 0 } else { (1u64 << bit) - 1 };
+                simple &= odd & before == 0;
+
+                if self.input.get(at) == Some(&b'"') {
+                    self.pos = at + 1;
+                    let raw = self
+                        .input
+                        .get(start..at)
+                        .ok_or_else(|| err(open, "unterminated string"))?;
+                    return Ok((raw, simple));
+                }
+                // A backslash: skip the escaped byte and keep going.
+                simple = false;
+                i = at + 2;
+                break;
             }
+            if i + 8 <= n {
+                continue;
+            }
+            // Tail, under eight bytes from the end.
+            while let Some(&b) = self.input.get(i) {
+                match b {
+                    b'"' => {
+                        self.pos = i + 1;
+                        let raw = self
+                            .input
+                            .get(start..i)
+                            .ok_or_else(|| err(open, "unterminated string"))?;
+                        return Ok((raw, simple));
+                    }
+                    b'\\' => {
+                        simple = false;
+                        i += 2;
+                    }
+                    _ => {
+                        if !(0x20..0x80).contains(&b) {
+                            simple = false;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            return Err(err(open, "unterminated string"));
         }
     }
 
@@ -257,7 +289,18 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
                 })
             }
             b'"' => {
-                let raw = self.c.scan_string()?;
+                let (raw, simple) = self.c.scan_string()?;
+                if simple {
+                    // Printable ASCII, so no escape to expand. `from_utf8`
+                    // still runs, because proving a fact and then asserting
+                    // it with `unsafe` is not a trade this crate makes; std's
+                    // ASCII path is a word at a time and this skips the
+                    // escape machinery entirely.
+                    return match core::str::from_utf8(raw) {
+                        Ok(s) => visitor.visit_borrowed_str(s),
+                        Err(_) => Err(err(at, "invalid UTF-8 in string")),
+                    };
+                }
                 match crate::unescape::unescape_checked(raw) {
                     Some(std::borrow::Cow::Borrowed(s)) => visitor.visit_borrowed_str(s),
                     Some(std::borrow::Cow::Owned(s)) => visitor.visit_string(s),
@@ -317,8 +360,8 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
         match self.c.peek() {
             b'{' | b'[' => self.deserialize_any(visitor),
             b'"' => {
-                let raw = self.c.scan_string()?;
-                if crate::unescape::unescape_checked(raw).is_none() {
+                let (raw, simple) = self.c.scan_string()?;
+                if !simple && crate::unescape::unescape_checked(raw).is_none() {
                     return Err(err(at, "invalid escape or UTF-8 in string"));
                 }
                 visitor.visit_unit()
@@ -376,7 +419,7 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
         let at = self.c.pos;
         match self.c.peek() {
             b'"' => {
-                let raw = self.c.scan_string()?;
+                let (raw, _) = self.c.scan_string()?;
                 let name = crate::unescape::unescape_checked(raw)
                     .ok_or_else(|| err(at, "invalid variant name"))?;
                 visitor.visit_enum(UnitVariant { name })
@@ -456,12 +499,20 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
         if self.c.peek() != b'"' {
             return Err(err(at, "expected an object key"));
         }
-        let raw = self.c.scan_string()?;
+        let (raw, simple) = self.c.scan_string()?;
         self.c.skip_ws();
         if !self.c.eat(b':') {
             return Err(err(self.c.pos, "expected ':' after object key"));
         }
 
+        // Keys are overwhelmingly simple, and serde matches them against
+        // the struct's field names by comparing bytes.
+        if simple {
+            return match core::str::from_utf8(raw) {
+                Ok(s) => seed.deserialize(BorrowedStr(s)).map(Some),
+                Err(_) => Err(err(at, "invalid UTF-8 in key")),
+            };
+        }
         let key = crate::unescape::unescape_checked(raw)
             .ok_or_else(|| err(at, "invalid escape or UTF-8 in key"))?;
         match key {
@@ -587,7 +638,7 @@ impl<'a, 'de> de::EnumAccess<'de> for VariantAccess<'a, 'de> {
         if self.c.peek() != b'"' {
             return Err(err(at, "expected a variant name"));
         }
-        let raw = self.c.scan_string()?;
+        let (raw, _) = self.c.scan_string()?;
         self.c.skip_ws();
         if !self.c.eat(b':') {
             return Err(err(self.c.pos, "expected ':' after variant"));
@@ -653,20 +704,67 @@ impl<'a, 'de> de::VariantAccess<'de> for Payload<'a, 'de> {
 
 #[cfg(test)]
 mod tests {
+    use super::Cursor;
+
+    fn scan(src: &[u8]) -> Option<(Vec<u8>, bool)> {
+        let mut c = Cursor { input: src, pos: 0 };
+        c.scan_string().ok().map(|(r, s)| (r.to_vec(), s))
+    }
+
+    /// The SWAR scan crosses 8-byte boundaries, so every alignment and
+    /// every length either side of the chunk size has to be covered.
     #[test]
-    fn swar_finds_the_same_byte_as_a_scalar_scan() {
-        // Cover every alignment and both terminators.
-        for pad in 0..24usize {
-            for term in [b'"', b'\\'] {
-                let mut v = vec![b'a'; pad];
-                v.push(term);
-                v.extend_from_slice(b"tail");
-                let want = pad;
-                assert_eq!(super::find_quote_or_escape(&v, 0), want, "pad={pad}");
-            }
+    fn finds_the_terminator_at_every_alignment() {
+        for len in 0..40usize {
+            let body = "a".repeat(len);
+            let src = format!("\"{body}\"tail");
+            let got = scan(src.as_bytes()).unwrap_or_else(|| panic!("len={len}"));
+            assert_eq!(got.0, body.as_bytes(), "len={len}");
+            assert!(got.1, "plain ASCII should be simple, len={len}");
         }
-        // No terminator at all returns the length.
-        let none = vec![b'x'; 37];
-        assert_eq!(super::find_quote_or_escape(&none, 0), 37);
+    }
+
+    /// `simple` must be false for anything needing the slow path, at every
+    /// offset - including when the special byte shares a chunk with the
+    /// terminator.
+    #[test]
+    fn simple_is_false_for_escapes_control_bytes_and_non_ascii() {
+        for pad in 0..20usize {
+            let a = "a".repeat(pad);
+            for (body, why) in [
+                (format!("{a}\\n"), "escape"),
+                (format!("{a}\u{7f}\u{80}"), "non-ascii"),
+                (format!("{a}é"), "utf-8"),
+            ] {
+                let src = format!("\"{body}\"");
+                let got = scan(src.as_bytes())
+                    .unwrap_or_else(|| panic!("{why} pad={pad} did not scan"));
+                assert!(!got.1, "{why} at pad={pad} was reported simple");
+            }
+            // A raw control byte, which cannot go through format!.
+            let mut src = vec![b'"'];
+            src.extend(std::iter::repeat_n(b'a', pad));
+            src.push(0x09);
+            src.push(b'"');
+            let got = scan(&src).unwrap_or_else(|| panic!("ctrl pad={pad}"));
+            assert!(!got.1, "raw tab at pad={pad} was reported simple");
+        }
+    }
+
+    /// Bytes after the closing quote must not affect `simple`.
+    #[test]
+    fn trailing_bytes_do_not_taint_simplicity() {
+        // The non-ASCII byte sits after the terminator, inside the same
+        // 8-byte chunk.
+        let src = "\"ab\",\"é\"".as_bytes();
+        let got = scan(src).expect("scan");
+        assert_eq!(got.0, b"ab");
+        assert!(got.1, "a later chunk byte leaked into `simple`");
+    }
+
+    #[test]
+    fn unterminated_is_an_error() {
+        assert!(scan(b"\"abc").is_none());
+        assert!(scan(b"\"abc\\").is_none());
     }
 }
