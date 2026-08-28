@@ -505,13 +505,14 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
             return Err(err(self.c.pos, "expected ':' after object key"));
         }
 
-        // Keys are overwhelmingly simple, and serde matches them against
-        // the struct's field names by comparing bytes.
+        // Keys are matched against the struct's field names by comparing
+        // bytes, and serde's generated field visitor implements
+        // `visit_bytes`. So a simple key needs no UTF-8 validation at all:
+        // hand over the bytes and let the target decide. `String` keys
+        // still get validated, because serde's `String` visitor calls
+        // `str::from_utf8` in its own `visit_bytes`.
         if simple {
-            return match core::str::from_utf8(raw) {
-                Ok(s) => seed.deserialize(BorrowedStr(s)).map(Some),
-                Err(_) => Err(err(at, "invalid UTF-8 in key")),
-            };
+            return seed.deserialize(BorrowedBytes(raw)).map(Some);
         }
         let key = crate::unescape::unescape_checked(raw)
             .ok_or_else(|| err(at, "invalid escape or UTF-8 in key"))?;
@@ -559,6 +560,53 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
 // =====================================================================
 // Keys and enums
 // =====================================================================
+
+/// A key handed over as bytes, skipping UTF-8 validation.
+///
+/// Sound and safe: whoever consumes it decides whether it needs to be
+/// `str`. Struct field matching does not, which is the common case.
+struct BorrowedBytes<'de>(&'de [u8]);
+
+impl<'de> de::Deserializer<'de> for BorrowedBytes<'de> {
+    type Error = Error;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_borrowed_bytes(self.0)
+    }
+
+    fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        match core::str::from_utf8(self.0) {
+            Ok(s) => visitor.visit_borrowed_str(s),
+            Err(_) => Err(Error::from_parts(0, "invalid UTF-8 in key")),
+        }
+    }
+
+    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        self.deserialize_str(visitor)
+    }
+
+    fn deserialize_identifier<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
+        visitor.visit_borrowed_bytes(self.0)
+    }
+
+    fn deserialize_enum<V: Visitor<'de>>(
+        self,
+        n: &'static str,
+        v: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value> {
+        match core::str::from_utf8(self.0) {
+            Ok(s) => BorrowedStr(s).deserialize_enum(n, v, visitor),
+            Err(_) => Err(Error::from_parts(0, "invalid UTF-8 in key")),
+        }
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct ignored_any
+    }
+}
 
 struct BorrowedStr<'de>(&'de str);
 

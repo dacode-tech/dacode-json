@@ -575,6 +575,70 @@ No `unsafe` was added. The simple path calls `str::from_utf8` rather than
 asserting the ASCII property it just proved; std's ASCII path is a word at
 a time, and the measurement above already includes that cost.
 
+### Where sonic-rs's remaining lead actually comes from
+
+An earlier version of this document attributed it to eliminated bounds
+checks. **That was wrong**, and reading `reader.rs` settled it. sonic-rs
+has two readers:
+
+| | used by | byte access |
+|---|---|---|
+| `Read` | `from_slice`, `from_str` — the struct path | `self.slice()[index]`, **bounds-checked** |
+| `PaddedSliceRead` | `Value` DOM only | raw pointers, **no checks** (`debug_assert!` only) |
+
+`PaddedSliceRead` is sound because the caller allocates `len + 64`, copies
+the document in, and appends the sentinel `x"x` followed by 61 zeros
+(`node.rs:1405`). Two invariants follow: any read of up to 64 bytes stays
+inside the allocation, and any unterminated string scan is guaranteed to
+hit a `"` in the padding, so the scan loop needs no length test and still
+terminates — the leading `x` stops that quote being read as escaped if the
+document ends in a backslash. It costs a full `memcpy` of the input, which
+is why sonic-rs's `Value` measured 4.04x input peak and 125.94 MiB
+allocated in §Memory.
+
+The struct path uses the checked reader and `serde/de.rs` contains four
+`unsafe` blocks in total. Its lead comes from somewhere else: **UTF-8 is
+validated once for the whole input**, by `simdutf8`, at reader
+construction (`next_invalid_utf8`, reader.rs:159). Every string extracted
+afterwards uses `from_utf8_unchecked`. The 22.2% `serde_json` spends in
+`core::str::from_utf8` is paid once, at SIMD speed, and never again.
+
+### What our no-unsafe-in-the-decoder policy costs: 16%
+
+That is measurable, so it was measured. Replacing `str::from_utf8` on the
+simple-string path with `from_utf8_unchecked` — exploiting the fact that
+the scan has *already proved* every byte is in `0x20..0x80` — gives, 4 MiB
+owned:
+
+| | MiB/s |
+|---|---|
+| shipped, safe | 312 |
+| with `from_utf8_unchecked` (**not shipped**) | **363** |
+| sonic-rs | 375 |
+
+So the policy costs about 16%, and nearly all of the remaining gap to
+sonic-rs is that one call. The experiment was reverted: `unsafe` in this
+crate stays confined to SIMD leaves whose signatures are total, and
+`from_utf8_unchecked` here would rest on a property established by a
+different function, which is exactly the kind of non-local invariant that
+rots.
+
+**A third of it is available safely, though.** Object keys are matched
+against struct field names by comparing bytes, and serde's generated field
+visitor implements `visit_bytes`. So a simple key can be handed over as
+`&[u8]` with no UTF-8 validation at all — and a `String` key still gets
+validated, because serde's `String` visitor calls `str::from_utf8` in its
+own `visit_bytes`. Correctness is preserved by delegation rather than by
+assertion:
+
+| 4 MiB | before | after | serde_json | sonic-rs |
+|---|---|---|---|---|
+| owned | 312 | **328** | 298 | 387 |
+| partial, 2 of 7 | 561 | **631** | 526 | 557 |
+
+Partial deserialization is now 20% ahead of sonic-rs and 13% ahead of
+`serde_json`, with no `unsafe` anywhere in the decoder.
+
 ### A pool bug the cross-checks found
 
 Adding `direct` meant the fuzzer compared three implementations instead of
