@@ -58,6 +58,24 @@ struct Record {
     tags: Vec<String>,
 }
 
+/// The same record with every heap field shrunk to fit.
+///
+/// `Vec<T>` is 24 bytes (pointer, length, capacity) and may hold slack
+/// from doubling; `Box<[T]>` is 16 and holds none. Same for `String` vs
+/// `Box<str>`. The saving is real but not free: serde builds the `Vec`
+/// or `String` first and then calls `into_boxed_slice`, which reallocates
+/// and copies whenever there is slack to shed.
+#[derive(Debug, serde::Deserialize)]
+struct RecordBoxed {
+    id: u64,
+    name: Box<str>,
+    age: u32,
+    active: bool,
+    city: Box<str>,
+    score: i64,
+    tags: Box<[Box<str>]>,
+}
+
 dacodec::flat_struct! {
     pub struct FlatRecord : FlatRecordFields {
         id: u64,
@@ -87,6 +105,10 @@ const IMPLS: &[&str] = &[
     "read_serde_json",
     "serde_json_value",
     "serde_json_structs",
+    // Vec/String against Box<[T]>/Box<str> for the same data.
+    "stream_structs",
+    "stream_structs_boxed",
+    "serde_json_structs_boxed",
     "simd_json_owned",
     "simd_json_tape",
     "sonic_rs_value",
@@ -395,6 +417,21 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
             let v: serde_json::Value = serde_json::from_slice(src).expect("valid");
             let n = v.as_array().map_or(0, Vec::len);
             (Box::new(v), format!("elems={n}"))
+        }
+        "stream_structs" => {
+            let v: Vec<Record> = dacodec::stream::from_slice(src).expect("valid");
+            let n = v.len();
+            (Box::new(v), format!("records={n}"))
+        }
+        "stream_structs_boxed" => {
+            let v: Vec<RecordBoxed> = dacodec::stream::from_slice(src).expect("valid");
+            let n = v.len();
+            (Box::new(v), format!("records={n}"))
+        }
+        "serde_json_structs_boxed" => {
+            let v: Vec<RecordBoxed> = serde_json::from_slice(src).expect("valid");
+            let n = v.len();
+            (Box::new(v), format!("records={n}"))
         }
         "serde_json_structs" => {
             let v: Vec<Record> = serde_json::from_slice(src).expect("valid");

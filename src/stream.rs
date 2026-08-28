@@ -347,7 +347,7 @@ fn expect_lit(input: &[u8], start: usize, end: usize, lit: &[u8]) -> Result<()> 
 /// for the borrowing form, which needs the index to outlive the result.
 pub fn from_slice<T: serde::de::DeserializeOwned>(input: &[u8]) -> Result<T> {
     let mut idx = StructuralIndex::default();
-    idx.reserve_for(input.len());
+    idx.reserve_estimated(input.len());
     scan::scan_into(Scanner::default(), input, &mut idx);
     from_parts(input, &idx)
 }
@@ -372,7 +372,7 @@ pub fn from_slice_with<'de, T: serde::Deserialize<'de>>(
     input: &'de [u8],
 ) -> Result<T> {
     idx.clear();
-    idx.reserve_for(input.len());
+    idx.reserve_estimated(input.len());
     scan::scan_into(Scanner::default(), input, idx);
     from_parts(input, idx)
 }
@@ -810,6 +810,59 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
             depth,
         })
         .map(Some)
+    }
+
+    /// How many elements remain, when that is cheap to find out.
+    ///
+    /// serde uses this to size the `Vec` up front instead of growing it by
+    /// doubling. The count is a walk over the index to the matching
+    /// bracket, so it is bounded: past `LIMIT` elements this gives up and
+    /// returns `None`. serde caps the capacity it will trust anyway
+    /// (`4096 / size_of::<T>()`), so counting a 100 000-element array
+    /// would be a walk of the whole index for a hint that gets clamped to
+    /// about 50.
+    fn size_hint(&self) -> Option<usize> {
+        const LIMIT: usize = 512;
+        if self.done {
+            return Some(0);
+        }
+        let mut at = self.c.at;
+        let mut depth = 0usize;
+        let mut count = 0usize;
+        // `first` means no element has been consumed yet, so an immediate
+        // closer is an empty array rather than a trailing element.
+        let mut seen_any = !self.first;
+        loop {
+            let p = *self.c.pos.get(at)? as usize;
+            match self.c.input.get(p)? {
+                b'{' | b'[' => {
+                    depth += 1;
+                    seen_any = true;
+                }
+                b'}' => depth = depth.checked_sub(1)?,
+                b']' => {
+                    if depth == 0 {
+                        return Some(if seen_any { count + 1 } else { 0 });
+                    }
+                    depth -= 1;
+                }
+                b'"' => {
+                    seen_any = true;
+                    // Skip the closing quote so a bracket inside a string
+                    // is not counted as structure.
+                    at += 1;
+                }
+                b',' if depth == 0 => {
+                    count += 1;
+                    seen_any = true;
+                    if count > LIMIT {
+                        return None;
+                    }
+                }
+                _ => seen_any = true,
+            }
+            at += 1;
+        }
     }
 }
 

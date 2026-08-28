@@ -165,7 +165,73 @@ the entire document to read one field from it.
 The cost is paid at encode time and in flexibility: the layout is fixed, and
 a schema change is a format change. See `docs/ZEROCOPY.md`.
 
-## 5. Actions
+## 5. `Box<[T]>` and `Box<str>` against `Vec<T>` and `String`
+
+A `Vec<T>` is 24 bytes — pointer, length, capacity — and its buffer may
+hold slack, because growing doubles. `Box<[T]>` is 16 bytes and holds
+none. Same for `String` against `Box<str>`. So the question is whether
+shrinking the target struct is worth it.
+
+Deserializing the 10.44 MiB `records` corpus into `Vec<Record>`, where the
+boxed variant differs only in using `Box<str>` and `Box<[Box<str>]>`:
+
+| | peak over base | allocations | bytes allocated |
+|---|---|---|---|
+| `serde_json` → `Vec<Record>` | 23.14 MiB | 454 677 | 21.20 MiB |
+| `serde_json` → `Vec<RecordBoxed>` | **16.20 MiB** | 534 879 | 15.75 MiB |
+| `dacodec::stream` → `Vec<Record>` | 36.23 MiB | 454 679 | 59.28 MiB |
+| `dacodec::stream` → `Vec<RecordBoxed>` | **32.14 MiB** | 454 679 | 55.06 MiB |
+
+**Boxing is worth it: 30% less peak memory for `serde_json`, 11% for the
+streaming path.** Three heap fields per record, at 8 bytes of header each
+plus shed slack, over 106 998 records.
+
+It is not free. serde has no `Box<str>` parser: it deserializes a `String`
+and calls `into_boxed_str`, which reallocates and copies whenever capacity
+exceeds length. That shows up as `serde_json`'s allocation count rising
+from 454 677 to **534 879**, +80 202 — roughly one extra allocation per
+record, for the `tags` vector whose doubling left slack to shed.
+
+The streaming path shows **no such increase**, and that is the interesting
+part. `SeqAccess::size_hint` reports the exact element count, taken from
+the structural index, so `tags` is allocated at the right size the first
+time. With no slack, `into_boxed_slice` has nothing to shrink and returns
+the same allocation. **An exact size hint makes boxing free.**
+
+So the guidance is:
+
+* boxing helps whenever a struct is kept, and helps most when it has many
+  small collections;
+* it is a property of the target type, so it costs nothing here to
+  support — it already works;
+* do not box values you are about to drop: you would pay the shrink for
+  memory you never hold.
+
+### The real memory cost is ours, not the struct's
+
+The streaming path uses more memory than `serde_json` for identical
+output, and boxing does not close that gap. The cause is the structural
+index, which was reserved for the worst case — one structural character
+per input byte, so **4 bytes of index per input byte**:
+
+| | reserved | actually used |
+|---|---|---|
+| `records`, 10.44 MiB | 43.78 MiB | 17.01 MiB |
+
+2.6x more than needed, and the single largest memory cost of streaming
+deserialization. `StructuralIndex::reserve_estimated` now reserves for 50%
+structural density instead, which halves it; denser documents still work
+because the scanners grow the vector, exactly as `scan()` already relied on
+when starting from 4 KiB. `tests/stream.rs` covers 57%, 100% and
+all-string documents to prove the growth path is correct.
+
+That took `Vec<Record>` from 39.42 to 36.23 MiB with **no change in
+throughput** (263 vs 264 MiB/s). The remaining ~22 MiB is the index at 2x
+the input size, and it is why streaming trades memory for the delimiter
+scan it does not have to repeat. Sizing it from measured density rather
+than a fixed fraction is the next available win.
+
+## 6. Actions
 
 1. **`Workspace::with_capacity`'s heuristic is very loose** — `len/2 + 64`
    nodes assumes two bytes per node, the `[0,0,0,...]` worst case. Real

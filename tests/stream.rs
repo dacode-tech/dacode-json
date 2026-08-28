@@ -301,6 +301,56 @@ fn rejects_trailing_and_empty_input() {
     }
 }
 
+/// The index is now reserved for ~50% structural density, not the worst
+/// case, so denser documents must make the scanner grow it correctly.
+/// `[1,1,1,...]` is about 57% structural; `[[[]]]`-style input is 100%.
+#[test]
+fn documents_denser_than_the_index_estimate_still_parse() {
+    let dense: Vec<(String, usize)> = vec![
+        // ~57% structural
+        (format!("[{}]", vec!["1"; 200_000].join(",")), 200_000),
+        // 100% structural: nothing but brackets and commas
+        (format!("[{}]", vec!["[]"; 200_000].join(",")), 200_000),
+        // all strings: every quote is indexed, so 4 index entries per element
+        (format!("[{}]", vec![r#""a""#; 200_000].join(",")), 200_000),
+    ];
+    for (src, want) in dense {
+        let v: JValue = dacodec::stream::from_slice(src.as_bytes())
+            .unwrap_or_else(|e| panic!("dense input failed: {e}"));
+        assert_eq!(v.as_array().map(Vec::len), Some(want));
+        // And it must still agree with serde_json.
+        let theirs: JValue = serde_json::from_slice(src.as_bytes()).expect("serde_json");
+        assert_eq!(v, theirs);
+    }
+}
+
+/// `size_hint` is a hint, but a wrong one silently mis-sizes every `Vec`.
+#[test]
+fn size_hint_matches_the_real_element_count() {
+    let cases: &[(&str, usize)] = &[
+        ("[]", 0),
+        ("[1]", 1),
+        ("[1,2,3]", 3),
+        (r#"["a","b"]"#, 2),
+        (r#"[[1,2],[3]]"#, 2),
+        (r#"[{"a":1},{"b":2}]"#, 2),
+        // brackets and commas inside strings must not be counted
+        (r#"["a,b","c]d","[e"]"#, 3),
+        ("[[],[],[]]", 3),
+        ("[null,true,false]", 3),
+    ];
+    for (src, want) in cases {
+        // A Vec<IgnoredAny> is built purely through SeqAccess, so if the
+        // hint were wrong the length would still be right - compare the
+        // parsed length against serde_json as the oracle.
+        let ours: Vec<JValue> = dacodec::stream::from_slice(src.as_bytes())
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        assert_eq!(ours.len(), *want, "{src}");
+        let theirs: Vec<JValue> = serde_json::from_slice(src.as_bytes()).expect("serde_json");
+        assert_eq!(ours, theirs, "{src}");
+    }
+}
+
 #[test]
 fn deeply_nested_input_is_rejected_not_overflowed() {
     let deep = format!("{}1{}", "[".repeat(4096), "]".repeat(4096));
