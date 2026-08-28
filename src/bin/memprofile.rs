@@ -110,6 +110,8 @@ const IMPLS: &[&str] = &[
     // Vec/String against Box<[T]>/Box<str> for the same data.
     "stream_structs",
     "stream_structs_boxed",
+    "direct_structs",
+    "direct_structs_boxed",
     "serde_json_structs_boxed",
     "simd_json_owned",
     "simd_json_tape",
@@ -419,6 +421,16 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
             let v: serde_json::Value = serde_json::from_slice(src).expect("valid");
             let n = v.as_array().map_or(0, Vec::len);
             (Box::new(v), format!("elems={n}"))
+        }
+        "direct_structs" => {
+            let v: Vec<Record> = dacodec::direct::from_slice(src).expect("valid");
+            let n = v.len();
+            (Box::new(v), format!("records={n}"))
+        }
+        "direct_structs_boxed" => {
+            let v: Vec<RecordBoxed> = dacodec::direct::from_slice(src).expect("valid");
+            let n = v.len();
+            (Box::new(v), format!("records={n}"))
         }
         "stream_structs" => {
             let v: Vec<Record> = dacodec::stream::from_slice(src).expect("valid");

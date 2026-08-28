@@ -470,6 +470,72 @@ coming back as `1e19`; the streaming parser keeps it as an exact `u64`, as
 `dacodec::from_slice` now uses this path. `Parser`/`Doc` still build a pool,
 which is the right structure for querying rather than converting.
 
+### Removing Stage 1 as well: `src/direct.rs`
+
+If the index is what keeps the streaming path behind, removing it should
+close the gap. `src/direct.rs` is the same deserializer with the same
+scalar decoding — shared functions, so the two cannot drift — and one byte
+cursor instead of a structural index.
+
+Whitespace is skipped a byte at a time, as `serde_json` does. String
+terminators are found eight bytes at a time with SWAR: `chunk ^
+broadcast('"')` gives a zero byte at each quote, and
+`(v - 0x01..) & !v & 0x80..` lifts those to high bits, so one
+`trailing_zeros` gives the offset. No target-feature detection, no
+`unsafe`.
+
+4 MiB, isolated:
+
+| | pool | stream | **direct** | serde_json | sonic-rs |
+|---|---|---|---|---|---|
+| owned | 200 | 290 | **309** | 298 | 377 |
+| borrowed | 222 | 328 | **362** | 330 | 438 |
+| partial, 2 of 7 | 264 | 451 | 503 | **529** | 555 |
+
+**It beats `serde_json` on the owned and borrowing paths** — +3.6% and
++9.6% — and is 4.9% behind on partial deserialization, where `serde_json`'s
+skip is still better than ours.
+
+Memory, deserializing 10.44 MiB into 106 998 records:
+
+| | peak over base | allocations | bytes allocated |
+|---|---|---|---|
+| `stream` (with index) | 36.25 MiB | 454 679 | 59.28 MiB |
+| **`direct`** | **23.17 MiB** | **454 677** | **21.20 MiB** |
+| `serde_json` | 23.11 MiB | 454 677 | 21.20 MiB |
+
+`direct` matches `serde_json` to the allocation, because both allocate
+nothing but the output.
+
+**So Stage 1 was the answer to the question in §12.** It is a genuine win
+for building a DOM, where the index is walked once and the result is kept —
+and a genuine loss for filling a struct, where it is a second pass over the
+document and 22 MiB of memory in service of delimiters that a byte cursor
+finds as it goes. `dacodec::from_slice` uses `direct`.
+
+One thing the index still buys that `direct` cannot: an exact
+`SeqAccess::size_hint`, because counting elements is an index walk. That
+makes `Box<[T]>` conversion free (`docs/MEMORY.md` §5) — with an exact
+hint there is no slack for `into_boxed_slice` to shed. `direct` shows
+`serde_json`'s +80 202 allocations on the boxed struct; `stream` does not.
+
+### A pool bug the cross-checks found
+
+Adding `direct` meant the fuzzer compared three implementations instead of
+one, and it found that `[-92233720368547758080]` deserialized to `-0.0`
+through the pool.
+
+The literal is 2^63 × 10, which is exactly 0 modulo 2^64, so the pool's
+wrapping accumulator landed on zero and the `-0` special case claimed it.
+The digit-count guard that would have caught the overflow ran immediately
+afterwards. Fixed by requiring `digits == 1`; leading zeros are already
+rejected, so the only single-digit literal that can reach `acc == 0` is a
+real `0`. Pinned by
+`tests/stream.rs::negative_overflow_that_wraps_to_zero`.
+
+That is the second pool number bug these cross-checks have surfaced, after
+`10000000000000000999` returning `1e19`.
+
 ### Two more optimisations that did not work
 
 Both were predicted by the profile and both changed nothing, which brings

@@ -103,6 +103,10 @@ pub mod pool;
 pub mod query;
 pub mod scalar;
 pub mod scan;
+/// A no-index streaming deserializer, for measuring what Stage 1 is
+/// worth. See `docs/RESULTS.md`.
+#[cfg(feature = "serde")]
+pub mod direct;
 pub mod stream;
 pub mod strict;
 /// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`

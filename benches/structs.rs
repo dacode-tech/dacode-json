@@ -115,6 +115,14 @@ fn bench_deserialize_owned(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(BenchmarkId::new("dacodec_direct", name), bytes, |b, bytes| {
+            b.iter(|| {
+                let v: Vec<Record> =
+                    dacodec::direct::from_slice_borrowed(black_box(bytes)).expect("de");
+                black_box(v)
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json", name), bytes, |b, bytes| {
             b.iter(|| {
                 let v: Vec<Record> = serde_json::from_slice(black_box(bytes)).expect("de");
@@ -172,6 +180,14 @@ fn bench_deserialize_borrowed(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(BenchmarkId::new("dacodec_direct", name), bytes, |b, bytes| {
+            b.iter(|| {
+                let v: Vec<RecordRef<'_>> =
+                    dacodec::direct::from_slice_borrowed(black_box(bytes)).expect("de");
+                black_box(v.len())
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json", name), bytes, |b, bytes| {
             b.iter(|| {
                 let v: Vec<RecordRef<'_>> = serde_json::from_slice(black_box(bytes)).expect("de");
@@ -214,6 +230,14 @@ fn bench_deserialize_partial(c: &mut Criterion) {
             b.iter(|| {
                 let v: Vec<RecordPartial> =
                     dacodec::stream::from_slice_with(&mut idx, black_box(bytes)).expect("de");
+                black_box(v.len())
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("dacodec_direct", name), bytes, |b, bytes| {
+            b.iter(|| {
+                let v: Vec<RecordPartial> =
+                    dacodec::direct::from_slice_borrowed(black_box(bytes)).expect("de");
                 black_box(v.len())
             });
         });

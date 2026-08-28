@@ -52,6 +52,14 @@ pub enum Finding {
     StreamValueMismatch { ours: String, theirs: String },
     /// The streaming and pool deserializers disagreed.
     StreamPoolMismatch { stream: String, pool: String },
+    /// The no-index deserializer disagreed with `serde_json` about
+    /// validity.
+    DirectValidityMismatch { ours: bool, theirs: bool },
+    /// The no-index deserializer produced a different value.
+    DirectValueMismatch { ours: String, theirs: String },
+    /// The two streaming deserializers, which share their scalar decoding
+    /// and differ only in whether they use Stage 1, disagreed.
+    DirectStreamMismatch { direct: String, stream: String },
 }
 
 /// Run every property against one input.
@@ -80,6 +88,31 @@ pub fn check(data: &[u8]) -> Vec<Finding> {
             out.push(Finding::StreamValueMismatch {
                 ours: a.to_string(),
                 theirs: b.to_string(),
+            });
+        }
+    }
+
+    // --- the no-index deserializer, same treatment ---
+    let direct = crate::direct::from_slice::<serde_json::Value>(data);
+    if direct.is_ok() != theirs.is_ok() {
+        out.push(Finding::DirectValidityMismatch {
+            ours: direct.is_ok(),
+            theirs: theirs.is_ok(),
+        });
+    } else if let (Ok(a), Ok(b)) = (direct.as_ref(), theirs.as_ref()) {
+        if !values_match(a, b) {
+            out.push(Finding::DirectValueMismatch {
+                ours: a.to_string(),
+                theirs: b.to_string(),
+            });
+        }
+    }
+    // Stage 1 must not change the answer.
+    if let (Ok(d), Ok(s)) = (direct.as_ref(), stream.as_ref()) {
+        if !values_match(d, s) {
+            out.push(Finding::DirectStreamMismatch {
+                direct: d.to_string(),
+                stream: s.to_string(),
             });
         }
     }
@@ -224,6 +257,7 @@ fn exercise_all(data: &[u8]) {
     black_box(crate::onepass::parse_to_pool(data).len());
     // The streaming deserializer must survive arbitrary bytes too.
     black_box(crate::stream::from_slice::<serde_json::Value>(data).is_ok());
+    black_box(crate::direct::from_slice::<serde_json::Value>(data).is_ok());
     black_box(crate::strict::validate(data).is_ok());
 }
 

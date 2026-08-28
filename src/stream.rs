@@ -51,6 +51,13 @@ pub struct Error {
 }
 
 impl Error {
+    /// Build an error from a byte offset and a message.
+    ///
+    /// Exists so [`crate::direct`] reports identically to this module.
+    pub(crate) fn from_parts(offset: usize, msg: &str) -> Self {
+        Error::at(offset, msg)
+    }
+
     fn at(offset: usize, msg: impl Into<String>) -> Self {
         Error {
             msg: msg.into(),
@@ -179,7 +186,7 @@ impl<'de> Cursor<'de> {
 // =====================================================================
 
 /// A validated JSON number, in the widest form that holds it exactly.
-enum Num {
+pub(crate) enum Num {
     I(i64),
     U(u64),
     F(f64),
@@ -197,7 +204,7 @@ enum Num {
 /// this alone: checking `1.7976931348623157e308` is a scan, converting it
 /// is a call into the float parser, and a field the target type ignores
 /// should not pay for the second.
-fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usize, bool)> {
+pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usize, bool)> {
     if s.is_empty() {
         return Err(Error::at(start, "expected a number"));
     }
@@ -258,7 +265,7 @@ fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usize, bool)> {
 
 /// Syntax-check a number the way a skipped field needs, including the
 /// range check that makes `1e400` an error rather than an infinity.
-fn validate_number(input: &[u8], start: usize, end: usize) -> Result<()> {
+pub(crate) fn validate_number(input: &[u8], start: usize, end: usize) -> Result<()> {
     let s = input.get(start..end).unwrap_or(&[]);
     let (_, _, _, is_float) = number_syntax(s, start)?;
     if is_float {
@@ -272,7 +279,7 @@ fn validate_number(input: &[u8], start: usize, end: usize) -> Result<()> {
     Ok(())
 }
 
-fn parse_number(input: &[u8], start: usize, end: usize) -> Result<Num> {
+pub(crate) fn parse_number(input: &[u8], start: usize, end: usize) -> Result<Num> {
     let s = input.get(start..end).unwrap_or(&[]);
     if s.is_empty() {
         return Err(Error::at(start, "expected a number"));
@@ -329,7 +336,7 @@ fn parse_number(input: &[u8], start: usize, end: usize) -> Result<Num> {
 }
 
 /// Validate a `true` / `false` / `null` literal.
-fn expect_lit(input: &[u8], start: usize, end: usize, lit: &[u8]) -> Result<()> {
+pub(crate) fn expect_lit(input: &[u8], start: usize, end: usize, lit: &[u8]) -> Result<()> {
     if input.get(start..end) == Some(lit) {
         Ok(())
     } else {

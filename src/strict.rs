@@ -435,7 +435,15 @@ impl State<'_> {
         // Note this cannot be caught by comparing values numerically:
         // `0.0 == -0.0` is true in IEEE 754. It took the `y_number_minus_zero`
         // case from JSONTestSuite to surface it.
-        if neg && acc == 0 && !is_float {
+        //
+        // `digits == 1` is load-bearing. `acc` is a wrapping accumulator,
+        // so a long literal can land on zero without being zero:
+        // `-92233720368547758080` is 2^63 * 10, which is exactly 0 mod
+        // 2^64, and this returned `-0.0` for it. Leading zeros are already
+        // rejected, so the only single-digit literal reaching `acc == 0`
+        // is a genuine `0`. Found by differential fuzzing against
+        // `serde_json`.
+        if neg && acc == 0 && digits == 1 && !is_float {
             self.pool.push(Type::Float, 0, (-0.0f64).to_bits());
             return Ok(p);
         }

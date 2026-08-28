@@ -45,10 +45,16 @@ fn agrees_with_serde_json_on_every_corpus_file() {
         for (name, bytes) in load_dir(sub) {
             let theirs = serde_json::from_slice::<JValue>(&bytes).is_ok();
             let ours = dacodec::stream::from_slice::<JValue>(&bytes).is_ok();
+            let direct = dacodec::direct::from_slice::<JValue>(&bytes).is_ok();
             checked += 1;
             if theirs != ours {
                 disagreements.push(format!(
                     "{sub}/{name}: serde_json={theirs} stream={ours}"
+                ));
+            }
+            if theirs != direct {
+                disagreements.push(format!(
+                    "{sub}/{name}: serde_json={theirs} direct={direct}"
                 ));
             }
         }
@@ -115,6 +121,12 @@ fn accepted_documents_deserialize_to_the_same_value() {
             assert!(
                 approx_eq(&ours, &theirs),
                 "{sub}/{name}: value mismatch\n  stream     {ours}\n  serde_json {theirs}"
+            );
+            let direct: JValue = dacodec::direct::from_slice(&bytes)
+                .unwrap_or_else(|e| panic!("{sub}/{name}: direct rejected an accepted doc: {e}"));
+            assert!(
+                approx_eq(&direct, &theirs),
+                "{sub}/{name}: value mismatch\n  direct     {direct}\n  serde_json {theirs}"
             );
             compared += 1;
         }
@@ -188,6 +200,8 @@ fn full_struct_matches_serde_json() {
     let theirs: Vec<Record> = serde_json::from_slice(&src).expect("serde_json");
     let ours: Vec<Record> = dacodec::stream::from_slice(&src).expect("stream");
     assert_eq!(ours, theirs);
+    let direct: Vec<Record> = dacodec::direct::from_slice(&src).expect("direct");
+    assert_eq!(direct, theirs);
 }
 
 #[test]
@@ -196,6 +210,8 @@ fn skipped_fields_match_serde_json() {
     let theirs: Vec<Partial> = serde_json::from_slice(&src).expect("serde_json");
     let ours: Vec<Partial> = dacodec::stream::from_slice(&src).expect("stream");
     assert_eq!(ours, theirs);
+    let direct: Vec<Partial> = dacodec::direct::from_slice(&src).expect("direct");
+    assert_eq!(direct, theirs);
 }
 
 #[test]
@@ -234,8 +250,10 @@ fn malformed_skipped_values_are_still_rejected() {
     for case in cases {
         let theirs = serde_json::from_str::<Partial>(case).is_ok();
         let ours = dacodec::stream::from_slice::<Partial>(case.as_bytes()).is_ok();
+        let direct = dacodec::direct::from_slice::<Partial>(case.as_bytes()).is_ok();
         assert!(!theirs, "serde_json accepted {case}, fix the test");
         assert_eq!(ours, theirs, "disagreement on skipped-field case: {case}");
+        assert_eq!(direct, theirs, "direct disagrees on skipped-field case: {case}");
     }
 }
 
@@ -257,13 +275,22 @@ fn number_edges_match_serde_json() {
     for case in cases {
         let theirs = serde_json::from_str::<JValue>(case);
         let ours = dacodec::stream::from_slice::<JValue>(case.as_bytes());
+        let direct = dacodec::direct::from_slice::<JValue>(case.as_bytes());
         assert_eq!(
             theirs.is_ok(),
             ours.is_ok(),
             "verdict differs on {case}: {theirs:?} vs {ours:?}"
         );
-        if let (Ok(a), Ok(b)) = (theirs, ours) {
+        assert_eq!(
+            theirs.is_ok(),
+            direct.is_ok(),
+            "direct verdict differs on {case}: {theirs:?} vs {direct:?}"
+        );
+        if let (Ok(a), Ok(b)) = (theirs.as_ref(), ours.as_ref()) {
             assert_eq!(a, b, "value differs on {case}");
+        }
+        if let (Ok(a), Ok(b)) = (theirs, direct) {
+            assert_eq!(a, b, "direct value differs on {case}");
         }
     }
 }
@@ -291,12 +318,58 @@ fn keeps_integer_precision_that_the_pool_loses() {
     );
 }
 
+/// Negative integers that overflow `i64` and happen to be zero modulo
+/// 2^64.
+///
+/// `-92233720368547758080` is 2^63 * 10. The pool parser accumulates into
+/// a wrapping `u64`, so it landed on exactly 0, hit the `-0` special case
+/// and returned `-0.0`. Found by the differential fuzzer.
+#[test]
+fn negative_overflow_that_wraps_to_zero() {
+    for src in [
+        &b"[-92233720368547758080]"[..],
+        &b"[-18446744073709551616]"[..], // 2^64
+        &b"[-36893488147419103232]"[..], // 2^65
+    ] {
+        let theirs: JValue = serde_json::from_slice(src).expect("serde_json");
+        let got_all: [(&str, std::result::Result<JValue, String>); 3] = [
+            (
+                "stream",
+                dacodec::stream::from_slice::<JValue>(src).map_err(|e| e.to_string()),
+            ),
+            (
+                "direct",
+                dacodec::direct::from_slice::<JValue>(src).map_err(|e| e.to_string()),
+            ),
+            (
+                "pool",
+                dacodec::de::from_slice::<JValue>(src).map_err(|e| e.to_string()),
+            ),
+        ];
+        for (who, got) in got_all {
+            let got = got.unwrap_or_else(|e| panic!("{who} rejected {src:?}: {e}"));
+            assert!(
+                approx_eq(&got, &theirs),
+                "{who} on {}: got {got}, serde_json {theirs}",
+                String::from_utf8_lossy(src)
+            );
+        }
+    }
+    // And a real -0 still round-trips as negative zero.
+    let z: JValue = dacodec::de::from_slice(&b"[-0]"[..]).expect("pool");
+    assert_eq!(z.to_string(), "[-0.0]");
+}
+
 #[test]
 fn rejects_trailing_and_empty_input() {
     for bad in ["", "   ", "\u{feff}{}"] {
         assert!(
             dacodec::stream::from_slice::<JValue>(bad.as_bytes()).is_err(),
             "accepted {bad:?}"
+        );
+        assert!(
+            dacodec::direct::from_slice::<JValue>(bad.as_bytes()).is_err(),
+            "direct accepted {bad:?}"
         );
     }
 }
@@ -318,6 +391,9 @@ fn documents_denser_than_the_index_estimate_still_parse() {
         let v: JValue = dacodec::stream::from_slice(src.as_bytes())
             .unwrap_or_else(|e| panic!("dense input failed: {e}"));
         assert_eq!(v.as_array().map(Vec::len), Some(want));
+        let d: JValue = dacodec::direct::from_slice(src.as_bytes())
+            .unwrap_or_else(|e| panic!("direct dense input failed: {e}"));
+        assert_eq!(d, v);
         // And it must still agree with serde_json.
         let theirs: JValue = serde_json::from_slice(src.as_bytes()).expect("serde_json");
         assert_eq!(v, theirs);
