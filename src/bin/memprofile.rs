@@ -65,6 +65,8 @@ struct Record {
 /// `Box<str>`. The saving is real but not free: serde builds the `Vec`
 /// or `String` first and then calls `into_boxed_slice`, which reallocates
 /// and copies whenever there is slack to shed.
+// The point is to hold these in memory and measure them, not to read them.
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 struct RecordBoxed {
     id: u64,
