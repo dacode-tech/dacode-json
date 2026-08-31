@@ -202,3 +202,43 @@ a process. Any benchmark comparing across an FFI boundary should isolate.
 5. **Consider a lazy tier.** simdjson On Demand is 1.6–5.4 GiB/s because it
    never materialises a DOM. For "read three fields from a large document",
    no amount of DOM-building optimisation catches that.
+
+## Current standing, after the streaming rewrite
+
+The tables above measure the pool parser, which is no longer what
+`dacodec::from_slice` uses. Re-measured with `src/direct.rs`:
+
+### Sum one integer field across every record, 4 MiB
+
+Parse plus read, which is the thing a caller actually does.
+
+| | MiB/s |
+|---|---|
+| simdjson On-Demand (C++) | **1 561** |
+| yyjson (C) | ~977 |
+| **dacodec `direct`** | **659** |
+| pool, non-validating | 591 |
+| serde_json into structs | 535 |
+| pool, validating | 365 |
+| serde_json into `Value` | 122 |
+
+simdjson is **2.4x** ahead, yyjson about **1.5x**. Both are C or C++ with
+far more work behind them, and simdjson On-Demand's advantage here is
+structural: it skips subtrees without materialising them at all, which is
+the same trick that makes `flat` fast, applied during the parse.
+
+Against the Rust field, `direct` leads: 23% over `serde_json` into structs
+and 5.4x over `serde_json` into `Value`.
+
+### A benchmark bug found while re-measuring
+
+The `serde_json` row of `c_sum_field` was parsing the document **twice** —
+once through a `w_serde_value` wrapper and again with `from_slice` — so it
+reported 64.5 MiB/s where the honest figure is 121.7. The wrapper existed
+to keep codegen shapes comparable between contenders and quietly doubled
+the work for one of them.
+
+Reporting a competitor at half its real speed is worse than not measuring
+it. Fixed, and the typed row was added alongside, since deserializing only
+the field you want is what anyone summing a field would write.
+

@@ -55,6 +55,31 @@ All figures: Apple M-series, `lto="fat"`, one process per benchmark.
 Reproduce with `tools/isolate.sh`. Full tables, including the corpora where
 these reverse: [`docs/RESULTS.md`](docs/RESULTS.md).
 
+### Against the C and C++ libraries
+
+The engines this was modelled on, measured in-process through FFI
+(`--features cbench`). Summing one integer field across every record of a
+4 MiB document — parse plus read, which is what a caller actually does:
+
+| | MiB/s |
+|---|---|
+| simdjson On-Demand (C++) | **1 561** |
+| yyjson (C) | ~977 |
+| **dacodec** | **659** |
+| serde_json, into structs | 535 |
+| serde_json, into `Value` | 122 |
+
+And raw DOM construction, 1 MiB of records: yyjson 1.08 GiB/s, yyjson with
+a reused pool 1.27 GiB/s, simdjson DOM 1.10 GiB/s, simdjson On-Demand
+1.87 GiB/s, against our validating parser at 417 MiB/s and the
+non-validating port at 753 MiB/s.
+
+**simdjson is 2.4x ahead and yyjson about 1.5x.** They are C and C++, they
+have had far more work put into them, and simdjson On-Demand skips whole
+subtrees without materialising them. This crate is faster than every Rust
+alternative measured on the typed path and slower than both C libraries on
+theirs; both statements are worth knowing before choosing.
+
 Full numbers, methodology and caveats: [`docs/RESULTS.md`](docs/RESULTS.md).
 
 ---
@@ -204,15 +229,24 @@ Details, including where this loses: [`docs/ZEROCOPY.md`](docs/ZEROCOPY.md).
 
 ---
 
-## The examples above, runnable
+## Examples
 
 ```bash
-cargo run --example readme
+cargo run --example readme              # every snippet on this page
+cargo run --example ndjson              # newline-delimited logs, borrowing
+cargo run --example query               # inspect a document without a struct
+cargo run --release --example zero_copy # the flat format, and why
 ```
 
-`examples/readme.rs` is every snippet on this page, compiled and asserted —
-including a check that a borrowed `&str` really points into the input
-buffer. A README example that does not compile is worse than none.
+| | |
+|---|---|
+| [`readme.rs`](examples/readme.rs) | every snippet on this page, compiled and asserted — including that a borrowed `&str` really points into the input |
+| [`ndjson.rs`](examples/ndjson.rs) | one document per line: borrowing structs, reading two fields of many, recovering from a bad line |
+| [`query.rs`](examples/query.rs) | walking a shape you do not control, reusing a `Parser`, validating |
+| [`zero_copy.rs`](examples/zero_copy.rs) | `flat` and `flat::typed`, schema mismatch, corruption, and a re-read timing |
+
+A README example that does not compile is worse than none, so they are all
+real programs rather than fragments.
 
 ## Running the tests
 

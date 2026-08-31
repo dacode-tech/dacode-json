@@ -97,14 +97,6 @@ fn w_sj_ondemand(p: &Padded) -> usize {
 }
 
 #[inline(never)]
-fn w_serde_value(src: &[u8]) -> usize {
-    serde_json::from_slice::<serde_json::Value>(src)
-        .ok()
-        .and_then(|v| v.as_array().map(Vec::len))
-        .unwrap_or(0)
-}
-
-#[inline(never)]
 fn w_serde_valid(src: &[u8]) -> bool {
     serde_json::from_slice::<serde_json::Value>(src).is_ok()
 }
@@ -283,11 +275,35 @@ fn bench_sum_field(c: &mut Criterion) {
             b.iter(|| black_box(SimdJson::sum_field(black_box(&padded), "score")));
         });
 
+        // Deserializing only the field we want is what a caller would
+        // actually write, and it is the workload `direct` is built for.
+        #[derive(serde::Deserialize)]
+        struct Score {
+            score: i64,
+        }
+
+        group.bench_with_input(BenchmarkId::new("dacodec_direct", label), src, |b, src| {
+            b.iter(|| {
+                let rows: Vec<Score> =
+                    dacodec::direct::from_slice_borrowed(black_box(src)).expect("valid");
+                let sum: i64 = rows.iter().map(|r| r.score).sum();
+                black_box(sum)
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("serde_json_typed", label), src, |b, src| {
+            b.iter(|| {
+                let rows: Vec<Score> = serde_json::from_slice(black_box(src)).expect("valid");
+                let sum: i64 = rows.iter().map(|r| r.score).sum();
+                black_box(sum)
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json", label), src, |b, src| {
             b.iter(|| {
-                // Counted through the same wrapper shape as everything else
-                // so codegen cannot drift between contenders.
-                black_box(w_serde_value(black_box(src)));
+                // Was parsing twice - `w_serde_value` and then `from_slice`
+                // - which halved the reported throughput. The wrapper is
+                // gone; this now measures one parse, like every other row.
                 let v: serde_json::Value =
                     serde_json::from_slice(black_box(src)).expect("valid");
                 let sum: i64 = v
