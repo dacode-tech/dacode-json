@@ -1,0 +1,71 @@
+# Code-size harness. Not part of the parent workspace on purpose: it
+# needs its own `[profile.release]` (`panic = "abort"`, `opt-level = "z"`)
+# and must not inherit the parent's dev-dependencies, which unwind.
+#
+# See `size/README.md` and `tools/size.sh`.
+[workspace]
+
+[package]
+name = "size"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+dacodec = { path = "..", default-features = false }
+serde = { version = "1", optional = true, default-features = false, features = [
+    "derive",
+    "alloc",
+] }
+serde_json = { version = "1", optional = true, default-features = false, features = [
+    "alloc",
+] }
+
+[features]
+# One feature per contender. Each is built in its own `cargo build`
+# invocation, because feature unification is per-invocation: `dacodec`
+# cannot be both `--no-default-features` and `--features serde` in one.
+default = []
+pull = []
+write = []
+direct = ["dacodec/serde", "dep:serde"]
+serdejson = ["dep:serde_json", "dep:serde"]
+
+[[bin]]
+name = "floor"
+path = "src/bin/floor.rs"
+
+[[bin]]
+name = "pull"
+path = "src/bin/pull.rs"
+required-features = ["pull"]
+
+[[bin]]
+name = "pullbytes"
+path = "src/bin/pullbytes.rs"
+required-features = ["pull"]
+
+[[bin]]
+name = "write"
+path = "src/bin/write.rs"
+required-features = ["write"]
+
+[[bin]]
+name = "direct"
+path = "src/bin/direct.rs"
+required-features = ["direct"]
+
+[[bin]]
+name = "serdejson"
+path = "src/bin/serdejson.rs"
+required-features = ["serdejson"]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+# Symbols do not land in a section `llvm-size` counts, but stripping keeps
+# the file honest for anyone who looks at `ls -l` instead.
+strip = true
+debug = false

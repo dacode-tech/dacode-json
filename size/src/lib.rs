@@ -1,0 +1,98 @@
+//! What every contender shares: the bare-metal shim, the input, and the
+//! way the answer is kept alive.
+//!
+//! Kept in one place so the difference between two binaries is the JSON
+//! library and nothing else. `floor` links this and only this, and its
+//! `.text` is subtracted from every other figure.
+
+#![no_std]
+
+/// The document every contender parses.
+///
+/// Small on purpose: the measurement is code size, and a bigger input
+/// would only grow `.rodata` by the same amount in every binary. Seven
+/// fields per record so that the on-demand path has something to skip,
+/// which is the case it exists for.
+pub const INPUT: &[u8] = br#"[
+{"id":1,"name":"alpha","score":11,"tags":["a","b"],"ok":true,"ratio":1.5,"note":null},
+{"id":2,"name":"bravo","score":22,"tags":["c"],"ok":false,"ratio":2.25,"note":"x"},
+{"id":3,"name":"charlie","score":33,"tags":[],"ok":true,"ratio":0.125,"note":null}
+]"#;
+
+/// Read `INPUT` in a way the optimiser cannot see through.
+///
+/// Without this, LTO constant-folds the whole job at compile time and
+/// every binary measures the same: the size of nothing.
+#[inline(never)]
+pub fn input() -> &'static [u8] {
+    // SAFETY: `INPUT` is a live `&'static [u8]`; reading the fat pointer
+    // to it volatilely reads a valid value of the same type. The
+    // volatility is the point — it stops the optimiser proving what the
+    // pointer is.
+    unsafe { core::ptr::read_volatile(&INPUT) }
+}
+
+/// Where the answer goes, so that computing it is not dead code.
+#[no_mangle]
+pub static mut ANSWER: i64 = 0;
+
+/// Publish the result and stop.
+pub fn finish(total: i64) -> ! {
+    // SAFETY: single-threaded, no interrupts, nothing else touches
+    // `ANSWER`. Volatile so the store cannot be elided.
+    unsafe { core::ptr::write_volatile(&raw mut ANSWER, total) };
+    loop {
+        // SAFETY: `wfi` is a hint instruction, always valid on ARMv7-M.
+        unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
+    }
+}
+
+/// `panic = "abort"` still needs somewhere to abort to.
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
+    loop {
+        // SAFETY: as above.
+        unsafe { core::arch::asm!("wfi", options(nomem, nostack)) };
+    }
+}
+
+/// A bump allocator over a static arena.
+///
+/// The contenders that need a heap need *an* allocator, and the choice
+/// of one is not what is being measured — so it is the smallest possible
+/// allocator, and the same one for all of them. It never frees, which is
+/// fine for a program that parses one document and stops.
+pub mod bump {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    const ARENA: usize = 64 * 1024;
+
+    static mut HEAP: [u8; ARENA] = [0; ARENA];
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    pub struct Bump;
+
+    // SAFETY: `alloc` hands out disjoint, correctly-aligned subslices of
+    // a single static arena and never reuses one, so no two live
+    // allocations overlap. `dealloc` does nothing, which is always sound.
+    unsafe impl GlobalAlloc for Bump {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let base = (&raw const HEAP).cast::<u8>() as usize;
+            let mut cur = NEXT.load(Ordering::Relaxed);
+            loop {
+                let start = (base + cur).next_multiple_of(layout.align()) - base;
+                let end = match start.checked_add(layout.size()) {
+                    Some(e) if e <= ARENA => e,
+                    _ => return core::ptr::null_mut(),
+                };
+                match NEXT.compare_exchange_weak(cur, end, Ordering::Relaxed, Ordering::Relaxed) {
+                    Ok(_) => return (base + start) as *mut u8,
+                    Err(c) => cur = c,
+                }
+            }
+        }
+
+        unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+    }
+}

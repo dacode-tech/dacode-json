@@ -455,6 +455,27 @@ the error path to a literal zero across 19 malformed inputs.
 creep back in unnoticed. [`docs/NOSTD.md`](docs/NOSTD.md) records what is in
 each tier and the decisions behind the split.
 
+### Code size
+
+Linked for bare-metal Cortex-M4F, `opt-level = "z"`, doing one job — parse
+a fixed buffer and sum a field. `.text` + `.rodata`, floor subtracted:
+
+| | bytes |
+|---|---:|
+| `pull`, locating fields only | **1 742** |
+| `write` | **5 896** |
+| `pull`, converting numbers | **24 486** |
+| `serde_json` (`no_std` + `alloc`) | 29 964 |
+| `dacodec` typed (`serde` + `alloc`) | 50 948 |
+| yyjson (C, reader only) | 69 316 |
+| simdjson, sonic-rs | neither compiles for the target |
+
+93% of the third row is `core`'s correctly-rounded float parser, reached
+through `as_i64`; `dacodec`'s own code in it is 2 544 bytes. yyjson is the
+largest thing in the table because `yyjson_read_opts` is a single
+47 KB `always_inline` function. Method, caveats and the full breakdown:
+[`docs/SIZE.md`](docs/SIZE.md). Reproduce with `tools/size.sh`.
+
 ### A warning about `vela-compat`
 
 That feature exposes the original Vela tier ports. They are kept for
@@ -483,6 +504,7 @@ parser that accepts truncated input.
 | [`docs/TIERS.md`](docs/TIERS.md) | the reference implementations this began as |
 | [`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md) | panic-free design study |
 | [`docs/NOSTD.md`](docs/NOSTD.md) | the `no_std` split, and what `std` actually buys |
+| [`docs/SIZE.md`](docs/SIZE.md) | code size on bare-metal ARM32, against yyjson, serde_json and simdjson |
 
 ---
 

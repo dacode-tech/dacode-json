@@ -3,3 +3,6 @@
 /fuzz/target
 /fuzz/artifacts
 /fuzz/Cargo.lock
+/size/target
+/size/Cargo.lock
+/size/cbase/target

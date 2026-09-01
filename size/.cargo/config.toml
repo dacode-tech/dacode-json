@@ -1,0 +1,23 @@
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+rustflags = [
+    "-C",
+    "link-arg=-Tlink.x",
+    # Do not page-align sections. Without it the linker inserts up to a
+    # page of padding between `.text` and `.rodata`, which does not show
+    # up in `llvm-size -A` but does make the file misleading.
+    "-C",
+    "link-arg=--nmagic",
+    # Drop every function the job does not reach. Without this the
+    # measurement is "how big is the library", not "how big is this
+    # program", and the C baselines get an unfair advantage because a
+    # `.o` of theirs would be measured the same way.
+    "-C",
+    "link-arg=--gc-sections",
+]
+
+[unstable]
+# Nothing unstable is used; the section is here so the file fails loudly
+# rather than silently if that changes.

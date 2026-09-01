@@ -22,6 +22,7 @@ exclude = [
     "benches/",
     "tests/",
     "corpus/",
+    "size/",
     ".agents/",
     ".claude/",
 ]
