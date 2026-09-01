@@ -41,7 +41,7 @@ use crate::stream::{expect_lit, parse_number, validate_number, Error, Num};
 
 type Result<T> = core::result::Result<T, Error>;
 
-fn err(at: usize, msg: &str) -> Error {
+fn err(at: usize, msg: &'static str) -> Error {
     // Reuse the streaming error so both paths report identically.
     Error::from_parts(at, msg)
 }

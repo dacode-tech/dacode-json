@@ -236,6 +236,17 @@ unsafe impl GlobalAlloc for Counter {
     }
 }
 
+/// Rust allocations since process start, per [`Counter`].
+///
+/// [`Snapshot::now`] reports the same number alongside everything else,
+/// but it also queries the system allocator. This reads one atomic and
+/// nothing more, so it can bracket a region that is asserted to allocate
+/// zero times without the measurement perturbing the count.
+#[must_use]
+pub fn rust_allocs() -> usize {
+    ALLOCS.load(Ordering::Relaxed)
+}
+
 /// A point-in-time memory reading.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Snapshot {

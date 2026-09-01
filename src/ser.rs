@@ -26,18 +26,19 @@
 //! Vela additionally escapes `/` (`common.vl:74`), which is legal but
 //! unusual; [`Options::escape_solidus`] reproduces it.
 
+use crate::errmsg::Msg;
 use serde::{ser, Serialize};
 use std::fmt;
 
 /// Serialisation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    msg: String,
+    msg: Msg,
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.msg)
+        fmt::Display::fmt(&self.msg, f)
     }
 }
 
@@ -46,16 +47,16 @@ impl std::error::Error for Error {}
 impl ser::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Error {
-            msg: msg.to_string(),
+            msg: Msg::custom(msg),
         }
     }
 }
 
 type Result<T> = core::result::Result<T, Error>;
 
-fn err(msg: &str) -> Error {
+fn err(msg: &'static str) -> Error {
     Error {
-        msg: msg.to_string(),
+        msg: Msg::Static(msg),
     }
 }
 

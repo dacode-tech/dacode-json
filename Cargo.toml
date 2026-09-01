@@ -71,9 +71,14 @@ default = ["std", "serde"]
 # which need neither an OS nor an allocator. What `std` adds is
 # `std::error::Error` impls, `from_reader`, and the profiling and
 # benchmarking machinery.
-std = []
+std = ["alloc"]
+# An allocator, but not an OS. What it buys is the node pool, the owned
+# half of `unescape`, and - the only place it shows up in an error type -
+# keeping the text of `serde`'s `Error::custom` instead of collapsing it
+# to a fixed string. See src/errmsg.rs.
+alloc = []
 # `serde::Deserializer` over the node pool - see src/de.rs.
-serde = ["dep:serde", "dep:zmij"]
+serde = ["alloc", "dep:serde", "dep:zmij"]
 # Pulls in the comparison parsers so `src/bin/profile.rs` can build.
 profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 # Compiles the vendored yyjson (C) and simdjson (C++) baselines. Off by

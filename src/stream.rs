@@ -36,6 +36,7 @@
 use core::fmt;
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
+use crate::errmsg::Msg;
 use crate::scan::{self, Scanner, StructuralIndex};
 
 // =====================================================================
@@ -45,7 +46,7 @@ use crate::scan::{self, Scanner, StructuralIndex};
 /// A streaming parse or type error, with the byte offset where it was hit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    msg: String,
+    msg: Msg,
     /// Byte offset in the input, when the error came from the parser.
     pub offset: Option<usize>,
 }
@@ -53,20 +54,21 @@ pub struct Error {
 impl Error {
     /// Build an error from a byte offset and a message.
     ///
-    /// Exists so [`crate::direct`] reports identically to this module.
-    pub(crate) fn from_parts(offset: usize, msg: &str) -> Self {
+    /// Exists so [`crate::direct`] and [`crate::pull`] report identically
+    /// to this module.
+    pub(crate) fn from_parts(offset: usize, msg: &'static str) -> Self {
         Error::at(offset, msg)
     }
 
-    fn at(offset: usize, msg: impl Into<String>) -> Self {
+    fn at(offset: usize, msg: &'static str) -> Self {
         Error {
-            msg: msg.into(),
+            msg: Msg::Static(msg),
             offset: Some(offset),
         }
     }
-    fn plain(msg: impl Into<String>) -> Self {
+    fn plain(msg: &'static str) -> Self {
         Error {
-            msg: msg.into(),
+            msg: Msg::Static(msg),
             offset: None,
         }
     }
@@ -76,7 +78,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.offset {
             Some(o) => write!(f, "{} at byte {o}", self.msg),
-            None => f.write_str(&self.msg),
+            None => fmt::Display::fmt(&self.msg, f),
         }
     }
 }
@@ -85,7 +87,10 @@ impl std::error::Error for Error {}
 
 impl de::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        Error::plain(msg.to_string())
+        Error {
+            msg: Msg::custom(msg),
+            offset: None,
+        }
     }
 }
 
@@ -714,12 +719,10 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
                     return Ok(None);
                 }
                 b',' => self.c.bump(),
-                other => {
-                    return Err(Error::at(
-                        self.c.peek_pos(),
-                        format!("expected ',' or '}}' in object, found {:?}", other as char),
-                    ))
-                }
+                // The offending byte used to be formatted into the
+                // message. The offset already points at it, and keeping
+                // it cost an allocation on every parse error.
+                _ => return Err(Error::at(self.c.peek_pos(), "expected ',' or '}' in object")),
             }
         }
         self.first = false;
@@ -800,12 +803,7 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
                     return Ok(None);
                 }
                 b',' => self.c.bump(),
-                other => {
-                    return Err(Error::at(
-                        self.c.peek_pos(),
-                        format!("expected ',' or ']' in array, found {:?}", other as char),
-                    ))
-                }
+                _ => return Err(Error::at(self.c.peek_pos(), "expected ',' or ']' in array")),
             }
         }
         self.first = false;

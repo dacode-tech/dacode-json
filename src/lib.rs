@@ -78,6 +78,14 @@
     )
 )]
 
+// Not `no_std` yet — that is the next step — but the error types below
+// already avoid the allocator, and `Msg::Custom` needs to name `Box<str>`
+// from a crate that will still exist once `std` is gone.
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+mod errmsg;
+
 #[cfg(feature = "cbench")]
 pub mod cbench;
 // `fuzz` cross-checks the reference tiers, so it needs `vela-compat`,

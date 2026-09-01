@@ -126,7 +126,8 @@ impl Error {
         match self {
             Error::Parse(e) => Some(e.offset),
             Error::Stream(e) => e.offset,
-            _ => None,
+            Error::Deserialize(e) => e.offset,
+            Error::Serialize(_) => None,
         }
     }
 }

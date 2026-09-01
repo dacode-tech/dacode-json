@@ -58,7 +58,7 @@ use crate::stream::{expect_lit, parse_number, Error, Num};
 
 type Result<T> = core::result::Result<T, Error>;
 
-fn err(at: usize, msg: &str) -> Error {
+fn err(at: usize, msg: &'static str) -> Error {
     Error::from_parts(at, msg)
 }
 

@@ -70,9 +70,15 @@ pub enum ErrorKind {
     InputTooLarge,
 }
 
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let msg = match self.kind {
+impl ErrorKind {
+    /// The message this kind prints as.
+    ///
+    /// Separate from [`Display`](core::fmt::Display) so a caller that
+    /// wraps a parse error can keep the text without formatting it into
+    /// an allocation — see [`crate::de::Error`].
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
             ErrorKind::Empty => "empty input",
             ErrorKind::ExpectedValue => "expected a value",
             ErrorKind::ExpectedKey => "expected an object key",
@@ -88,8 +94,13 @@ impl core::fmt::Display for Error {
             ErrorKind::InvalidString => "invalid string",
             ErrorKind::DepthLimitExceeded => "nesting too deep",
             ErrorKind::InputTooLarge => "input exceeds i32::MAX bytes",
-        };
-        write!(f, "{msg} at byte {}", self.offset)
+        }
+    }
+}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} at byte {}", self.kind.as_str(), self.offset)
     }
 }
 

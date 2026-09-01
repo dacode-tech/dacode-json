@@ -25,6 +25,7 @@
 //! (see [`crate::scalar`]); [`Deserializer::from_faithful`] exists but is
 //! marked accordingly.
 
+use crate::errmsg::Msg;
 use crate::pool::Pool;
 use crate::query::{Doc, Value};
 use crate::tag::Type;
@@ -39,18 +40,40 @@ use std::fmt;
 /// Deserialisation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    msg: String,
+    msg: Msg,
+    /// Byte offset in the input, set when the fault was in the JSON
+    /// rather than in the target type.
+    pub offset: Option<usize>,
 }
 
 impl Error {
-    fn new(msg: impl Into<String>) -> Self {
-        Error { msg: msg.into() }
+    fn new(msg: &'static str) -> Self {
+        Error {
+            msg: Msg::Static(msg),
+            offset: None,
+        }
+    }
+
+    /// Carry a parse failure through as a deserialisation failure.
+    ///
+    /// The kind's text is `&'static str` and the offset is a number, so
+    /// nothing here allocates; the previous `format!("parse error: {e}")`
+    /// did, on a path that is otherwise allocation-free once the pool is
+    /// warm.
+    fn parse(e: crate::strict::Error) -> Self {
+        Error {
+            msg: Msg::Static(e.kind.as_str()),
+            offset: Some(e.offset),
+        }
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.msg)
+        match self.offset {
+            Some(o) => write!(f, "{} at byte {o}", self.msg),
+            None => fmt::Display::fmt(&self.msg, f),
+        }
     }
 }
 
@@ -58,7 +81,10 @@ impl std::error::Error for Error {}
 
 impl de::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
-        Error::new(msg.to_string())
+        Error {
+            msg: Msg::custom(msg),
+            offset: None,
+        }
     }
 }
 
@@ -111,8 +137,7 @@ pub fn from_slice<T>(input: &[u8]) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    let pool = crate::strict::parse_to_pool(input)
-        .map_err(|e| Error::new(format!("parse error: {e}")))?;
+    let pool = crate::strict::parse_to_pool(input).map_err(Error::parse)?;
     T::deserialize(Deserializer::from_doc(Doc::new(input, &pool)))
 }
 
@@ -199,7 +224,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
                     .ok_or_else(|| Error::new("enum variant key is not valid UTF-8"))?;
                 visitor.visit_enum(PayloadVariant { name, value: v })
             }
-            other => Err(Error::new(format!("cannot deserialize enum from {other:?}"))),
+            _ => Err(Error::new("expected a string or an object for an enum")),
         }
     }
 
