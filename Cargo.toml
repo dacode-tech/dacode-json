@@ -66,7 +66,12 @@ rkyv = "0.8"
 
 [features]
 # `serde` is on by default: it is what the public API is built from.
-default = ["serde"]
+default = ["std", "serde"]
+# Standard library. Turning it off leaves the parser, `pull` and `write`,
+# which need neither an OS nor an allocator. What `std` adds is
+# `std::error::Error` impls, `from_reader`, and the profiling and
+# benchmarking machinery.
+std = []
 # `serde::Deserializer` over the node pool - see src/de.rs.
 serde = ["dep:serde", "dep:zmij"]
 # Pulls in the comparison parsers so `src/bin/profile.rs` can build.

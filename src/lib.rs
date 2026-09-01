@@ -111,6 +111,9 @@ pub mod direct;
 /// Allocates nothing. See the module docs for the validation trade.
 #[cfg(feature = "serde")]
 pub mod pull;
+/// Writing JSON into a caller-supplied buffer, with no allocation.
+#[cfg(feature = "serde")]
+pub mod write;
 pub mod stream;
 pub mod strict;
 /// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`
