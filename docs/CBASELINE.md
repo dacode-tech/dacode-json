@@ -230,6 +230,66 @@ the same trick that makes `flat` fast, applied during the parse.
 Against the Rust field, `direct` leads: 23% over `serde_json` into structs
 and 5.4x over `serde_json` into `Value`.
 
+### simdjson DOM is *slower* than yyjson on most corpora
+
+Worth separating, because "simdjson is fastest" is not what the numbers
+say. DOM construction, 1 MiB, MiB/s:
+
+| corpus | yyjson | yyjson pool | simdjson DOM | simdjson On-Demand |
+|---|---|---|---|---|
+| records | 1108 | 1299 | 1125 | 1917 |
+| int_array | 872 | 1210 | **614** | 1677 |
+| strings | 722 | 761 | 973 | 5858 |
+| geo_int | 515 | 788 | **460** | 2018 |
+| geo_float | 1009 | 1205 | **747** | 3714 |
+
+**simdjson's DOM loses to plain yyjson on three of five**, and to yyjson
+with a reused pool on four. A flat node pool is simply a good way to build
+a document; SIMD in Stage 1 does not make up for a more expensive Stage 2.
+
+On-Demand is not a faster DOM builder — it is not a DOM builder. It
+materialises nothing, converts only what is asked for, and skips the rest
+by index arithmetic. Comparing its throughput to a DOM builder's compares
+"scan and skip" against "scan and construct".
+
+### Can we close the gap to On-Demand?
+
+The honest answer is mostly no, and the reason is now measured rather than
+guessed.
+
+The obvious move is to use our own structural index, which is exactly what
+`src/stream.rs` is. It has now been tested on four workloads, including the
+skip-heavy one where an index should be at its best:
+
+| workload, 4 MiB | `stream` (indexed) | `direct` (no index) |
+|---|---|---|
+| owned structs | 286 | **312** |
+| borrowed structs | 325 | **352** |
+| partial, 2 of 7 fields | 463 | **631** |
+| sum 1 field of 5 | 467 | **666** |
+
+**The index has now failed to pay on every workload measured.** Even when
+four fifths of the document is skipped, a byte cursor beats it. That is a
+strong enough result to stop proposing index-based designs for the typed
+path.
+
+Three things separate us from On-Demand, and only one is addressable:
+
+1. **It does not validate what it skips.** Our skip checks every byte, so
+   a document `serde_json` rejects is rejected here too, wherever the fault
+   is. Giving that up would close much of the gap and would break the
+   drop-in guarantee. Not a trade this crate makes.
+2. **Its Stage 1 is faster than ours** — 2.1–3.3 GiB/s here. Since
+   end-to-end On-Demand reaches 1.56 GiB/s on `c_sum_field`, our Stage 1 is
+   close to being the ceiling for any index design we could build on it,
+   before the walk costs anything at all.
+3. **It seeks a field; serde enumerates them.** `MapAccess` must yield
+   *every* key so the derived field matcher can reject the unknown ones. A
+   lazy `get("score")` API could skip whole records without ever
+   constructing a key. This is the one real opening, and it is the shape
+   `Doc::get` and sonic-rs's `get` already have — but it is a different API
+   from `Deserialize`, not a speedup of it.
+
 ### A benchmark bug found while re-measuring
 
 The `serde_json` row of `c_sum_field` was parsing the document **twice** —

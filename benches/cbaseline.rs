@@ -291,6 +291,21 @@ fn bench_sum_field(c: &mut Criterion) {
             });
         });
 
+        // The indexed streaming path. Navigation is index arithmetic
+        // rather than byte scanning, which should pay when most of the
+        // document is skipped - this is the shape simdjson On-Demand wins
+        // on, so it is the one worth testing.
+        group.bench_with_input(BenchmarkId::new("dacodec_stream", label), src, |b, src| {
+            let mut idx = dacodec::stream::Index::default();
+            idx.reserve_estimated(src.len());
+            b.iter(|| {
+                let rows: Vec<Score> =
+                    dacodec::stream::from_slice_with(&mut idx, black_box(src)).expect("valid");
+                let sum: i64 = rows.iter().map(|r| r.score).sum();
+                black_box(sum)
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json_typed", label), src, |b, src| {
             b.iter(|| {
                 let rows: Vec<Score> = serde_json::from_slice(black_box(src)).expect("valid");
