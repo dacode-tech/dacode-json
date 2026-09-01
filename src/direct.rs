@@ -67,6 +67,12 @@ fn zero_bytes(v: u64) -> u64 {
 struct Cursor<'de> {
     input: &'de [u8],
     pos: usize,
+    /// The whole input was verified to be ASCII before parsing started.
+    ///
+    /// When set, a string with no escape and no control byte needs no
+    /// UTF-8 check at all: every byte in the buffer is below 0x80, so
+    /// every subslice of it is valid UTF-8 by construction.
+    ascii: bool,
 }
 
 impl<'de> Cursor<'de> {
@@ -193,6 +199,27 @@ impl<'de> Cursor<'de> {
         }
     }
 
+    /// A `simple` string as `&str`.
+    ///
+    /// In ASCII mode this is free: [`from_slice_ascii`] verified every byte
+    /// of the buffer is below 0x80 before parsing began, and `raw` is a
+    /// subslice of that buffer, so it is valid UTF-8 by construction.
+    /// Otherwise `simple` only promises no escape and no control byte, so
+    /// the UTF-8 check still runs.
+    #[inline]
+    fn ascii_str<'s>(&self, raw: &'s [u8]) -> Option<&'s str> {
+        if self.ascii {
+            // SAFETY: `from_slice_ascii` returned early unless `is_ascii`
+            // held for the whole input, and `raw` came from `scan_string`,
+            // which only ever yields subslices of `self.input`. Every byte
+            // is therefore below 0x80, and all-ASCII is valid UTF-8. The
+            // invariant is established and checked in this module, three
+            // functions away, and nowhere else can set `ascii`.
+            return Some(unsafe { core::str::from_utf8_unchecked(raw) });
+        }
+        core::str::from_utf8(raw).ok()
+    }
+
     /// End of the scalar starting at `self.pos`: the next delimiter,
     /// whitespace or end of input.
     #[inline]
@@ -221,13 +248,75 @@ pub fn from_slice<T: serde::de::DeserializeOwned>(input: &[u8]) -> Result<T> {
     from_slice_borrowed(input)
 }
 
+/// True when no byte has its high bit set.
+///
+/// One pass, eight bytes at a time, no branches: OR everything together
+/// and look at the result once. This is the check that lets the ASCII
+/// parser skip every per-string UTF-8 validation.
+#[must_use]
+pub fn is_ascii(input: &[u8]) -> bool {
+    let mut acc = 0u64;
+    let mut i = 0usize;
+    while i + 8 <= input.len() {
+        let Some(arr) = input
+            .get(i..i + 8)
+            .and_then(|s| <[u8; 8]>::try_from(s).ok())
+        else {
+            break;
+        };
+        acc |= u64::from_le_bytes(arr);
+        i += 8;
+    }
+    let mut tail = 0u8;
+    while let Some(&b) = input.get(i) {
+        tail |= b;
+        i += 1;
+    }
+    (acc & HI) == 0 && (tail & 0x80) == 0
+}
+
+/// Parse input that is known to be ASCII, checking that claim first.
+///
+/// Payloads that are ASCII by construction — machine-generated logs,
+/// identifiers, base64, numeric telemetry — pay for UTF-8 validation they
+/// cannot fail. This verifies the whole buffer is ASCII once, in a single
+/// vectorisable pass, and then skips the per-string check entirely.
+///
+/// Returns [`Error`] if the input is not ASCII; it does not fall back,
+/// because silently taking a slower path would hide the fact that the
+/// assumption was wrong. Use [`from_slice`] for arbitrary UTF-8.
+///
+/// Validation is otherwise identical: escapes, control bytes, numbers and
+/// structure are all checked exactly as [`from_slice`] checks them.
+pub fn from_slice_ascii<T: serde::de::DeserializeOwned>(input: &[u8]) -> Result<T> {
+    from_slice_ascii_borrowed(input)
+}
+
+/// [`from_slice_ascii`], borrowing from the input.
+pub fn from_slice_ascii_borrowed<'de, T: serde::Deserialize<'de>>(
+    input: &'de [u8],
+) -> Result<T> {
+    if !is_ascii(input) {
+        return Err(err(0, "input is not ASCII"));
+    }
+    run(input, true)
+}
+
 /// Parse into a possibly-borrowing `T`.
 ///
 /// Nothing needs to outlive the call except the input itself — there is no
 /// scratch buffer at all — so unlike [`crate::stream::from_slice_with`]
 /// this needs no caller-owned state.
 pub fn from_slice_borrowed<'de, T: serde::Deserialize<'de>>(input: &'de [u8]) -> Result<T> {
-    let mut c = Cursor { input, pos: 0 };
+    run(input, false)
+}
+
+fn run<'de, T: serde::Deserialize<'de>>(input: &'de [u8], ascii: bool) -> Result<T> {
+    let mut c = Cursor {
+        input,
+        pos: 0,
+        ascii,
+    };
     c.skip_ws();
     if c.pos >= input.len() {
         return Err(err(c.pos, "empty document"));
@@ -291,15 +380,10 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
             b'"' => {
                 let (raw, simple) = self.c.scan_string()?;
                 if simple {
-                    // Printable ASCII, so no escape to expand. `from_utf8`
-                    // still runs, because proving a fact and then asserting
-                    // it with `unsafe` is not a trade this crate makes; std's
-                    // ASCII path is a word at a time and this skips the
-                    // escape machinery entirely.
-                    return match core::str::from_utf8(raw) {
-                        Ok(s) => visitor.visit_borrowed_str(s),
-                        Err(_) => Err(err(at, "invalid UTF-8 in string")),
-                    };
+                    if let Some(s) = self.c.ascii_str(raw) {
+                        return visitor.visit_borrowed_str(s);
+                    }
+                    return Err(err(at, "invalid UTF-8 in string"));
                 }
                 match crate::unescape::unescape_checked(raw) {
                     Some(std::borrow::Cow::Borrowed(s)) => visitor.visit_borrowed_str(s),
@@ -755,7 +839,11 @@ mod tests {
     use super::Cursor;
 
     fn scan(src: &[u8]) -> Option<(Vec<u8>, bool)> {
-        let mut c = Cursor { input: src, pos: 0 };
+        let mut c = Cursor {
+            input: src,
+            pos: 0,
+            ascii: false,
+        };
         c.scan_string().ok().map(|(r, s)| (r.to_vec(), s))
     }
 

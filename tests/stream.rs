@@ -360,6 +360,94 @@ fn negative_overflow_that_wraps_to_zero() {
     assert_eq!(z.to_string(), "[-0.0]");
 }
 
+/// The ASCII parser must agree with the general one on every ASCII file,
+/// and must refuse anything that is not ASCII rather than guess.
+#[test]
+fn ascii_parser_agrees_wherever_it_applies() {
+    let mut ascii_files = 0usize;
+    let mut rejected_non_ascii = 0usize;
+
+    for sub in ["test_parsing", "test_transform", "JSON_checker", "test_encoding"] {
+        for (name, bytes) in load_dir(sub) {
+            let general = dacodec::direct::from_slice::<JValue>(&bytes);
+            let ascii = dacodec::direct::from_slice_ascii::<JValue>(&bytes);
+
+            if dacodec::direct::is_ascii(&bytes) {
+                ascii_files += 1;
+                assert_eq!(
+                    general.is_ok(),
+                    ascii.is_ok(),
+                    "{sub}/{name}: verdicts differ on ASCII input"
+                );
+                if let (Ok(a), Ok(b)) = (general, ascii) {
+                    assert_eq!(a, b, "{sub}/{name}: values differ");
+                }
+            } else {
+                rejected_non_ascii += 1;
+                assert!(
+                    ascii.is_err(),
+                    "{sub}/{name}: ASCII parser accepted non-ASCII input"
+                );
+            }
+        }
+    }
+    assert!(ascii_files > 250, "only {ascii_files} ASCII files");
+    assert!(rejected_non_ascii > 10, "only {rejected_non_ascii} non-ASCII files");
+}
+
+/// `is_ascii` must agree with the obvious byte-at-a-time version at every
+/// length, since it reads eight bytes at a time.
+#[test]
+fn is_ascii_matches_a_scalar_scan() {
+    for len in 0..40usize {
+        for pos in 0..=len {
+            let mut v = vec![b'a'; len];
+            let want = if pos < len {
+                if let Some(slot) = v.get_mut(pos) {
+                    *slot = 0x80;
+                }
+                false
+            } else {
+                true
+            };
+            assert_eq!(
+                dacodec::direct::is_ascii(&v),
+                want,
+                "len={len} high byte at {pos}"
+            );
+            assert_eq!(dacodec::direct::is_ascii(&v), v.iter().all(|b| *b < 0x80));
+        }
+    }
+}
+
+/// Everything else stays checked: the ASCII path skips UTF-8 validation,
+/// not validation.
+#[test]
+fn ascii_parser_still_rejects_malformed_json() {
+    let bad: &[&str] = &[
+        r#"{"a":01}"#,
+        r#"{"a":1,}"#,
+        r#"{"a":tru}"#,
+        r#"{"a":"\q"}"#,
+        r#"{"a":1"#,
+        "[1,]",
+        r#"{"a":1} x"#,
+    ];
+    for src in bad {
+        assert!(
+            serde_json::from_str::<JValue>(src).is_err(),
+            "fix the test: serde_json accepted {src}"
+        );
+        assert!(
+            dacodec::direct::from_slice_ascii::<JValue>(src.as_bytes()).is_err(),
+            "ASCII parser accepted {src}"
+        );
+    }
+    // Raw control bytes in strings are still rejected, even though they
+    // are ASCII.
+    assert!(dacodec::direct::from_slice_ascii::<JValue>(b"[\"a\tb\"]").is_err());
+}
+
 #[test]
 fn rejects_trailing_and_empty_input() {
     for bad in ["", "   ", "\u{feff}{}"] {

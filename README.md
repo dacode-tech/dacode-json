@@ -32,7 +32,8 @@ byte-identical, verified over the whole test corpus.
 | validate, 1 MiB | **2.47 ms** | 7.22 ms |
 | string escaping, clean text | **9.24 GiB/s** | 2.19 GiB/s |
 | DOM memory, 10 MiB | **43.4 MiB** | 97.1 MiB |
-| deserialize to structs, 4 MiB | **328 MiB/s** | 298 MiB/s |
+| deserialize to structs, 4 MiB | **331 MiB/s** | 293 MiB/s |
+| …with `from_slice_ascii` | **366 MiB/s** | — |
 | deserialize borrowing structs | **352 MiB/s** | 337 MiB/s |
 | deserialize 2 of 7 fields | **631 MiB/s** | 526 MiB/s |
 | serialize from structs, 4 MiB | 717 MiB/s | **761 MiB/s** |

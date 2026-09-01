@@ -639,6 +639,67 @@ assertion:
 Partial deserialization is now 20% ahead of sonic-rs and 13% ahead of
 `serde_json`, with no `unsafe` anywhere in the decoder.
 
+### An ASCII-only parser: +10.7%, and the safety story changes
+
+Payloads that are ASCII by construction — machine-generated logs,
+identifiers, base64, numeric telemetry — pay for UTF-8 validation they
+cannot fail. `direct::from_slice_ascii` verifies the whole buffer is ASCII
+once, in a single pass eight bytes at a time, and then skips the per-string
+check entirely.
+
+| 4 MiB owned structs | MiB/s |
+|---|---|
+| `from_slice` | 331 |
+| **`from_slice_ascii`** | **366** |
+| serde_json | 293 |
+| simd-json | 351 |
+| sonic-rs | 384 |
+
+**+10.7%, net of the pre-check pass**, which puts it past simd-json and
+within 5% of sonic-rs.
+
+The interesting part is not the number, it is that this makes the `unsafe`
+defensible. §"What our no-unsafe-in-the-decoder policy costs" rejected
+`from_utf8_unchecked` because the property it relied on was established by
+a different function — a non-local invariant that rots. Here the check is
+in the same module, three functions from its use, it is the *entry
+condition of the API*, and nothing else can set the flag. That is a
+reviewable proof rather than a standing assumption, so the one `unsafe`
+block is justified where the earlier one was not.
+
+Everything else stays checked. `from_slice_ascii` still rejects `01`,
+`tru`, `\q`, trailing commas, unterminated input and raw control bytes —
+it skips UTF-8 validation, not validation. It also **refuses non-ASCII
+input rather than falling back**, because silently taking the slow path
+would hide a wrong assumption. `tests/stream.rs` holds it to the general
+parser's verdict on all 289 ASCII corpus files and to rejecting all 30
+non-ASCII ones.
+
+### Is the Rust side under-optimised in the C comparisons?
+
+Worth checking, since it would invalidate every cross-language number.
+
+| | |
+|---|---|
+| C and C++ | `-O3`, `-fno-plt`, `-fno-rtti`, no `-march` |
+| Rust | `opt-level=3`, `lto="fat"`, `codegen-units=1`, default target-cpu |
+
+Symmetric: neither side gets host-specific tuning. Adding
+`-C target-cpu=native` to Rust makes things **slower**, uniformly:
+
+| 4 MiB owned | default | `target-cpu=native` |
+|---|---|---|
+| `dacodec` ascii | 366 | 335 |
+| `dacodec` direct | 331 | 324 |
+| serde_json | 293 | 288 |
+| sonic-rs | 384 | 368 |
+
+Every contender lost 2–8% and the ordering did not change, so the default
+is already appropriate for Apple Silicon and no one is being
+disadvantaged. `panic = "abort"` remains unset deliberately — the benches
+link dev-dependencies that unwind — which costs Rust a little that C does
+not pay, and is the one asymmetry left.
+
 ### A pool bug the cross-checks found
 
 Adding `direct` meant the fuzzer compared three implementations instead of

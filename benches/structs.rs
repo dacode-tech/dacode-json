@@ -123,6 +123,14 @@ fn bench_deserialize_owned(c: &mut Criterion) {
             });
         });
 
+        group.bench_with_input(BenchmarkId::new("dacodec_ascii", name), bytes, |b, bytes| {
+            b.iter(|| {
+                let v: Vec<Record> =
+                    dacodec::direct::from_slice_ascii_borrowed(black_box(bytes)).expect("de");
+                black_box(v)
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json", name), bytes, |b, bytes| {
             b.iter(|| {
                 let v: Vec<Record> = serde_json::from_slice(black_box(bytes)).expect("de");
