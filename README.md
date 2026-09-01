@@ -55,6 +55,35 @@ All figures: Apple M-series, `lto="fat"`, one process per benchmark.
 Reproduce with `tools/isolate.sh`. Full tables, including the corpora where
 these reverse: [`docs/RESULTS.md`](docs/RESULTS.md).
 
+## On-demand: pull fields, skip the rest
+
+`Deserialize` cannot say "give me two of these forty fields and stop
+looking" — serde must yield every key so the derived matcher can reject the
+unknown ones. `dacodec::pull` is the other shape, and it **allocates
+nothing**:
+
+```rust
+let mut total = 0i64;
+dacodec::pull::select(json, &[b"id", b"score"], |got| {
+    total += got[1].and_then(|v| v.as_i64()).unwrap_or(0);
+    Ok(())
+})?;
+```
+
+Summing one field across 4 MiB of records: **778 MiB/s**, against 656 for
+the serde path and 538 for `serde_json` into structs. Selecting the *first*
+field of seven reaches 998 MiB/s, because the rest of the record is skipped
+by counting braces rather than parsed.
+
+**It validates less, on purpose.** Content in the skipped tail is not
+checked: `[{"a":1,"b":01}]` is rejected by `from_slice` and accepted here.
+That is the same trade simdjson's On-Demand API makes, and it is why this is
+a separate function rather than a quiet speed-up of `from_slice`. Call
+[`validate`] first if you need both.
+
+Nothing here allocates — no index, no pool, no `String` — so it is also the
+path to use where an allocator is scarce.
+
 ### Against the C and C++ libraries
 
 The engines this was modelled on, measured in-process through FFI
@@ -63,10 +92,11 @@ The engines this was modelled on, measured in-process through FFI
 
 | | MiB/s |
 |---|---|
-| simdjson On-Demand (C++) | **1 561** |
-| yyjson (C) | ~977 |
-| **dacodec** | **659** |
-| serde_json, into structs | 535 |
+| simdjson On-Demand (C++) | **1 608** |
+| yyjson (C) | ~1 010 |
+| **dacodec `pull`** | **778** |
+| dacodec `from_slice` (serde) | 656 |
+| serde_json, into structs | 538 |
 | serde_json, into `Value` | 122 |
 
 And raw DOM construction, 1 MiB of records: yyjson 1.08 GiB/s, yyjson with
@@ -74,7 +104,7 @@ a reused pool 1.27 GiB/s, simdjson DOM 1.10 GiB/s, simdjson On-Demand
 1.87 GiB/s, against our validating parser at 417 MiB/s and the
 non-validating port at 753 MiB/s.
 
-**simdjson is 2.4x ahead and yyjson about 1.5x.** They are C and C++, they
+**simdjson is 2.1x ahead and yyjson about 1.3x.** They are C and C++, they
 have had far more work put into them, and simdjson On-Demand skips whole
 subtrees without materialising them. This crate is faster than every Rust
 alternative measured on the typed path and slower than both C libraries on

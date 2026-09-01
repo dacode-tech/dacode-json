@@ -107,6 +107,10 @@ pub mod scan;
 /// worth. See `docs/RESULTS.md`.
 #[cfg(feature = "serde")]
 pub mod direct;
+/// On-demand extraction: pull named fields, skip the rest wholesale.
+/// Allocates nothing. See the module docs for the validation trade.
+#[cfg(feature = "serde")]
+pub mod pull;
 pub mod stream;
 pub mod strict;
 /// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`

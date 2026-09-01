@@ -290,6 +290,52 @@ Three things separate us from On-Demand, and only one is addressable:
    `Doc::get` and sonic-rs's `get` already have — but it is a different API
    from `Deserialize`, not a speedup of it.
 
+### The one opening, taken: `src/pull.rs`
+
+Point 3 above turned out to be worth building. `pull` seeks named fields
+and skips the remainder of each record by counting braces, rather than
+enumerating every key so serde can reject it. It allocates **nothing**.
+
+Sum one integer field across 4 MiB of records:
+
+| | MiB/s |
+|---|---|
+| simdjson On-Demand (C++) | **1 608** |
+| yyjson (C) | ~1 010 |
+| **`dacodec::pull`** | **778** |
+| `dacodec::direct` (serde) | 656 |
+| pool, non-validating | 589 |
+| serde_json into structs | 538 |
+| `dacodec::stream` (indexed) | 467 |
+| serde_json into `Value` | 122 |
+
+That is +19% over the serde path and closes the gap to simdjson from 2.4x
+to 2.1x. Against yyjson's own `sum_field`, which is C doing the same job,
+we are now within 25%.
+
+**And the first version of it was wrong.** `Fields::finish` walked the
+remaining fields one at a time, which undoes the early exit entirely —
+selecting the *first* of seven fields measured the same as selecting the
+*last* (731 vs 729 MiB/s). That flatness is what exposed the bug. With the
+tail skipped by brace counting instead:
+
+| field selected | position | MiB/s |
+|---|---|---|
+| `id` | 1st of 7 | **998** |
+| `age` | 3rd | 976 |
+| `city` | 5th | 929 |
+| `score` | 6th | 892 |
+| `tags` | 7th | 864 |
+
+Position now matters, which is the evidence that the skip is real.
+
+**The trade is explicit.** Content in the skipped tail is not validated:
+`[{"a":1,"b":01}]` is rejected by `from_slice` and by `serde_json`, and
+accepted here. That is the same trade simdjson On-Demand makes, and it is
+why this is a separate function with its own contract rather than a
+speed-up of `from_slice`. `pull::tests::malformed_content_in_a_skipped_tail_is_accepted`
+pins it, and asserts that `from_slice` still rejects all of it.
+
 ### A benchmark bug found while re-measuring
 
 The `serde_json` row of `c_sum_field` was parsing the document **twice** —

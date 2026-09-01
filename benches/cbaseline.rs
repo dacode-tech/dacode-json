@@ -306,6 +306,20 @@ fn bench_sum_field(c: &mut Criterion) {
             });
         });
 
+        // On-demand: seek the one field, skip the rest of each record
+        // without enumerating it. Allocates nothing.
+        group.bench_with_input(BenchmarkId::new("dacodec_pull", label), src, |b, src| {
+            b.iter(|| {
+                let mut sum = 0i64;
+                dacodec::pull::select(black_box(src), &[b"score"], |got| {
+                    sum += got[0].and_then(|v| v.as_i64()).unwrap_or(0);
+                    Ok(())
+                })
+                .expect("valid");
+                black_box(sum)
+            });
+        });
+
         group.bench_with_input(BenchmarkId::new("serde_json_typed", label), src, |b, src| {
             b.iter(|| {
                 let rows: Vec<Score> = serde_json::from_slice(black_box(src)).expect("valid");
