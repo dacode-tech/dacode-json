@@ -27,14 +27,22 @@ exclude = [
 ]
 
 [dependencies]
-serde = { version = "1", optional = true }
+# `default-features = false` so a `no_std` build of this crate does not
+# drag `std` back in through serde. `std` re-enables it below.
+serde = { version = "1", optional = true, default-features = false, features = [
+    "alloc",
+] }
 serde_json = { version = "1", optional = true }
 simd-json = { version = "0.18", optional = true }
 sonic-rs = { version = "0.5", optional = true }
 # Shortest round-trip float formatting (Schubfach). serde_json 1.0.151 uses
 # the same crate, so output is byte-identical and the benchmark compares
 # serializers rather than float printers.
-zmij = { version = "1", optional = true }
+#
+# Not optional: `write` needs it, and `write` is the module that has to
+# build for a target with no allocator. `zmij` is itself `no_std` and
+# formats into a stack buffer, so it costs that target nothing.
+zmij = "1"
 
 [[bin]]
 name = "profile"
@@ -71,14 +79,14 @@ default = ["std", "serde"]
 # which need neither an OS nor an allocator. What `std` adds is
 # `std::error::Error` impls, `from_reader`, and the profiling and
 # benchmarking machinery.
-std = ["alloc"]
+std = ["alloc", "serde?/std"]
 # An allocator, but not an OS. What it buys is the node pool, the owned
 # half of `unescape`, and - the only place it shows up in an error type -
 # keeping the text of `serde`'s `Error::custom` instead of collapsing it
 # to a fixed string. See src/errmsg.rs.
 alloc = []
 # `serde::Deserializer` over the node pool - see src/de.rs.
-serde = ["alloc", "dep:serde", "dep:zmij"]
+serde = ["alloc", "dep:serde"]
 # Pulls in the comparison parsers so `src/bin/profile.rs` can build.
 profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 # Compiles the vendored yyjson (C) and simdjson (C++) baselines. Off by

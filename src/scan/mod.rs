@@ -13,6 +13,9 @@
 //! than `i32::MAX`. We keep the `u32` element type (it halves cache
 //! pressure versus `usize`, which is the whole point) and keep the guard.
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 pub mod branchless;
 pub mod scalar;
 pub mod table;
@@ -35,11 +38,18 @@ pub const MAX_INPUT_LEN: usize = i32::MAX as usize;
 /// Byte positions of structural characters, in ascending order.
 ///
 /// Equivalent to Vela's "handle": `[count: i64][pos: i32; count]`.
+///
+/// The one thing in Stage 1 that needs an allocator: the index is a
+/// `Vec`, and its length is not known until the scan has run. The
+/// classifiers below need nothing. A fixed-buffer sink would let Stage 1
+/// run with no heap; see `docs/NOSTD.md` for why that has not been done.
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Default)]
 pub struct StructuralIndex {
     positions: Vec<u32>,
 }
 
+#[cfg(feature = "alloc")]
 impl StructuralIndex {
     /// `json_structural_new_simd(capacity)`.
     #[inline]
@@ -301,6 +311,7 @@ impl Scanner {
 /// `out` is **not** cleared; callers that reuse a buffer must call
 /// [`StructuralIndex::clear`] first (as `json_pool_parse_ws` does at
 /// `parse_indexed.vl:713`).
+#[cfg(feature = "alloc")]
 #[inline]
 pub fn scan_into(scanner: Scanner, input: &[u8], out: &mut StructuralIndex) {
     match scanner {
@@ -317,6 +328,7 @@ pub fn scan_into(scanner: Scanner, input: &[u8], out: &mut StructuralIndex) {
 }
 
 /// Convenience: allocate an index and scan into it.
+#[cfg(feature = "alloc")]
 #[must_use]
 #[allow(clippy::manual_clamp)]
 pub fn scan(scanner: Scanner, input: &[u8]) -> StructuralIndex {

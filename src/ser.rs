@@ -27,8 +27,10 @@
 //! unusual; [`Options::escape_solidus`] reproduces it.
 
 use crate::errmsg::Msg;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt;
 use serde::{ser, Serialize};
-use std::fmt;
 
 /// Serialisation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +44,7 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 impl ser::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
@@ -295,6 +297,41 @@ fn write_u64(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
+/// Format a `u128` into `out` without allocating.
+///
+/// The 64-bit case had a hand-rolled digit loop and the 128-bit one used
+/// `write!` through `std::io::Write`, which is the only reason the
+/// serializer needed an OS. 39 digits is `u128::MAX`.
+#[inline]
+fn write_u128(out: &mut Vec<u8>, mut v: u128) {
+    if v == 0 {
+        out.push(b'0');
+        return;
+    }
+    let mut buf = [0u8; 39];
+    let mut i = buf.len();
+    while v > 0 {
+        i -= 1;
+        if let Some(slot) = buf.get_mut(i) {
+            *slot = b'0' + (v % 10) as u8;
+        }
+        v /= 10;
+    }
+    if let Some(digits) = buf.get(i..) {
+        out.extend_from_slice(digits);
+    }
+}
+
+/// Format an `i128` into `out`. `unsigned_abs` so `i128::MIN` does not
+/// overflow on negation.
+#[inline]
+fn write_i128(out: &mut Vec<u8>, v: i128) {
+    if v < 0 {
+        out.push(b'-');
+    }
+    write_u128(out, v.unsigned_abs());
+}
+
 /// Format an `f64`. JSON has no infinity or NaN, so those become `null`,
 /// matching `serde_json`.
 ///
@@ -350,8 +387,7 @@ impl<'a, 'b> ser::Serializer for &'b mut Serializer<'a> {
         Ok(())
     }
     fn serialize_i128(self, v: i128) -> Result<()> {
-        use std::io::Write as _;
-        let _ = write!(self.out, "{v}");
+        write_i128(self.out, v);
         Ok(())
     }
 
@@ -369,8 +405,7 @@ impl<'a, 'b> ser::Serializer for &'b mut Serializer<'a> {
         Ok(())
     }
     fn serialize_u128(self, v: u128) -> Result<()> {
-        use std::io::Write as _;
-        let _ = write!(self.out, "{v}");
+        write_u128(self.out, v);
         Ok(())
     }
 

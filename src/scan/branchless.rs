@@ -44,9 +44,12 @@
 //! only S6/S6b are affected. See
 //! `tests/scanner_equivalence.rs::documented_divergence_backslash_outside_string`.
 
-use super::scalar::{scan_range, TailState};
 use super::table;
-use super::StructuralIndex;
+#[cfg(feature = "alloc")]
+use super::{
+    scalar::{scan_range, TailState},
+    StructuralIndex,
+};
 
 /// simdjson's `ODD_BITS`, narrowed to 16 bits. `0xAAAA`.
 const ODD_BITS_16: u16 = 0xAAAA;
@@ -219,6 +222,10 @@ pub fn prefix_xor16(mut v: u16) -> u16 {
 }
 
 /// Rolling state carried between 16-byte chunks.
+///
+/// Only the index-writing scanners thread it, so like them it needs
+/// `alloc`. The classifiers below are stateless and do not.
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, Copy, Default)]
 struct Carry {
     /// 0 or 1 — byte 0 of the next chunk is escaped.
@@ -231,6 +238,7 @@ struct Carry {
 ///
 /// Port of `json_branchless_chunk` (`structural_simd.vl:326-355`), minus the
 /// bit-packing Vela needs to return three values through one `i64`.
+#[cfg(feature = "alloc")]
 #[inline]
 fn chunk<C: Classify>(input: &[u8], offset: usize, carry: Carry) -> (u16, Carry) {
     let Some(bytes) = input.get(offset..offset + 16) else {
@@ -268,6 +276,7 @@ fn chunk<C: Classify>(input: &[u8], offset: usize, carry: Carry) -> (u16, Carry)
     )
 }
 
+#[cfg(feature = "alloc")]
 impl Carry {
     /// Convert the bitmask carries into the boolean state the scalar tail
     /// loop expects (`structural_simd.vl:266-274`).
@@ -283,18 +292,21 @@ impl Carry {
 /// S6 — `json_structural_scan_branchless_into`, using Vela's comparison
 /// classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_into(input: &[u8], out: &mut StructuralIndex) {
     scan_into_with::<Compare, true>(input, out);
 }
 
 /// S6 with the nibble-shuffle table classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_table_into(input: &[u8], out: &mut StructuralIndex) {
     scan_into_with::<Table, true>(input, out);
 }
 
 /// S6b with the nibble-shuffle table classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_table_2x_into(input: &[u8], out: &mut StructuralIndex) {
     scan_2x_into_with::<Table, true>(input, out);
 }
@@ -302,24 +314,28 @@ pub fn scan_table_2x_into(input: &[u8], out: &mut StructuralIndex) {
 /// S6b, hybrid classifier, but with Vela's original serial extraction loop
 /// instead of the unrolled one. Isolates the cost of the extractor.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_hybrid_2x_serial_into(input: &[u8], out: &mut StructuralIndex) {
     scan_2x_into_with::<Hybrid, false>(input, out);
 }
 
 /// S6 with the hybrid classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_hybrid_into(input: &[u8], out: &mut StructuralIndex) {
     scan_into_with::<Hybrid, true>(input, out);
 }
 
 /// S6b with the hybrid classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_hybrid_2x_into(input: &[u8], out: &mut StructuralIndex) {
     scan_2x_into_with::<Hybrid, true>(input, out);
 }
 
 /// S6 — 16 bytes per iteration, generic over the classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_into_with<C: Classify, const UNROLL: bool>(input: &[u8], out: &mut StructuralIndex) {
     out.reserve_for(input.len());
 
@@ -344,12 +360,14 @@ pub fn scan_into_with<C: Classify, const UNROLL: bool>(input: &[u8], out: &mut S
 /// entered half as often; the carry from chunk A feeds chunk B, so the two
 /// classifications pipeline but the escape/string state stays sequential.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_2x_into(input: &[u8], out: &mut StructuralIndex) {
     scan_2x_into_with::<Compare, true>(input, out);
 }
 
 /// S6b — 32 bytes per iteration, generic over the classifier.
 #[inline]
+#[cfg(feature = "alloc")]
 pub fn scan_2x_into_with<C: Classify, const UNROLL: bool>(input: &[u8], out: &mut StructuralIndex) {
     out.reserve_for(input.len());
 

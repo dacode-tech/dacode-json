@@ -21,7 +21,9 @@
 //!   fallback, so `nope` and `@!?` both parse as `null`.
 //! * **All-whitespace ranges push `null`.**
 
+#[cfg(feature = "alloc")]
 use crate::pool::Pool;
+#[cfg(feature = "alloc")]
 use crate::tag::Type;
 
 /// `idx_skip_ws` — `parse_indexed.vl:137-153`. JSON whitespace is
@@ -43,6 +45,10 @@ pub fn skip_ws(input: &[u8], from: usize, to: usize) -> usize {
 /// `__json_parse_scalar_fast(input, pool, from, to)`.
 ///
 /// Always pushes exactly one node (the IR returns 1 on every path).
+///
+/// [`skip_ws`] above is the part of this module that needs no allocator;
+/// this writes into a [`Pool`], which does.
+#[cfg(feature = "alloc")]
 #[inline]
 pub fn parse_scalar_fast(input: &[u8], pool: &mut Pool, from: usize, to: usize) {
     let to = to.min(input.len());

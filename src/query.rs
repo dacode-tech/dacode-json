@@ -9,9 +9,11 @@
 //! together — hand it the wrong string and you get silent garbage. [`Doc`]
 //! bundles them so the borrow checker enforces the pairing.
 
+use alloc::borrow::Cow;
+use alloc::string::String;
+
 use crate::pool::{Node, Pool};
 use crate::tag::Type;
-use std::borrow::Cow;
 
 /// A pool plus the input it indexes into.
 #[derive(Debug, Clone, Copy)]
@@ -267,7 +269,7 @@ impl<'a> Value<'a> {
     }
 
     fn write_json(&self, out: &mut String) {
-        use std::fmt::Write as _;
+        use core::fmt::Write as _;
         match self.node.typ() {
             Type::Null => out.push_str("null"),
             Type::Bool => out.push_str(if self.node.payload != 0 { "true" } else { "false" }),

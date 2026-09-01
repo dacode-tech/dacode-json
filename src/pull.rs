@@ -126,7 +126,16 @@ impl<'de> Raw<'de> {
             Num::U(v) => i64::try_from(v).ok(),
             Num::F(v) => {
                 // Accept an integral float, as `serde_json`'s `as_i64` does not.
-                if v.fract() == 0.0 && v.abs() < 9.223_372_036_854_776e18 {
+                //
+                // Spelled without `f64::fract`/`f64::abs`, which live in
+                // `std` rather than `core`: in range, a round-trip
+                // through `i64` truncates, so it only compares equal when
+                // there was no fraction to truncate. `LIMIT` is 2^63,
+                // exactly representable, and the bound has to be there —
+                // `i64::MAX as f64` rounds *up* to 2^63, so a value of
+                // 2^63 would otherwise saturate and appear to round-trip.
+                const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+                if v > -LIMIT && v < LIMIT && (v as i64) as f64 == v {
                     Some(v as i64)
                 } else {
                     None
@@ -165,12 +174,33 @@ impl<'de> Raw<'de> {
     /// Decode a string, validating escapes and UTF-8.
     ///
     /// Borrows when there is no escape to expand, which is the common case.
+    /// Needs an allocator only for the other case; see
+    /// [`as_borrowed_str`](Self::as_borrowed_str) for the form that needs
+    /// none.
+    #[cfg(feature = "alloc")]
     #[must_use]
-    pub fn as_str(&self) -> Option<std::borrow::Cow<'de, str>> {
+    pub fn as_str(&self) -> Option<alloc::borrow::Cow<'de, str>> {
         if self.kind != Kind::Str {
             return None;
         }
         crate::unescape::unescape_checked(self.bytes)
+    }
+
+    /// The string as a subslice of the input, if it can be one.
+    ///
+    /// `None` when the string contains an escape — expanding one needs a
+    /// buffer, and this module has none — or is not valid UTF-8. See
+    /// [`crate::unescape::borrow_str_checked`] for why those two are not
+    /// distinguished. [`bytes`](Self::bytes) still gives the raw extent.
+    ///
+    /// This is the accessor that exists with no allocator, which is what
+    /// makes the module usable on a target with no heap.
+    #[must_use]
+    pub fn as_borrowed_str(&self) -> Option<&'de str> {
+        if self.kind != Kind::Str {
+            return None;
+        }
+        crate::unescape::borrow_str_checked(self.bytes)
     }
 }
 

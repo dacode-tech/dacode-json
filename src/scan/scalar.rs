@@ -4,6 +4,7 @@
 //! (`tier2/structural.vl:68-110`). Also used verbatim as the `< 16 byte`
 //! tail of the SIMD scanners, so it lives here as a reusable helper.
 
+#[cfg(feature = "alloc")]
 use super::{is_structural, is_structural_table, StructuralIndex};
 
 /// Carry state threaded from the SIMD main loop into the scalar tail.
@@ -17,6 +18,7 @@ pub struct TailState {
 
 /// `json_structural_scan_into(input, handle)`, with Vela's if-chain
 /// classifier.
+#[cfg(feature = "alloc")]
 #[inline]
 pub fn scan_into(input: &[u8], out: &mut StructuralIndex) {
     out.reserve_for(input.len());
@@ -24,6 +26,7 @@ pub fn scan_into(input: &[u8], out: &mut StructuralIndex) {
 }
 
 /// The same scan with the if-chain replaced by a 256-entry class table.
+#[cfg(feature = "alloc")]
 #[inline]
 pub fn scan_table_into(input: &[u8], out: &mut StructuralIndex) {
     out.reserve_for(input.len());
@@ -34,6 +37,7 @@ pub fn scan_table_into(input: &[u8], out: &mut StructuralIndex) {
 ///
 /// This is the body of the tail loops in `structural_simd.vl:164-202`,
 /// `:276-314` and `:415-453` — all three are textually identical.
+#[cfg(feature = "alloc")]
 #[inline]
 pub fn scan_range(
     input: &[u8],
@@ -46,6 +50,7 @@ pub fn scan_range(
 
 /// `TABLE` selects the classifier; both arms are monomorphised, so the
 /// branch does not exist at runtime.
+#[cfg(feature = "alloc")]
 #[inline]
 fn scan_generic<const TABLE: bool>(
     input: &[u8],

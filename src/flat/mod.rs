@@ -66,8 +66,26 @@
 
 pub mod typed;
 
+use alloc::borrow::{Cow, ToOwned};
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use crate::query::{Doc, Value};
 use crate::tag::Type;
+
+/// The builders' string-interning table: key -> `(offset, len)` in the
+/// blob.
+///
+/// A `HashMap` where there is a `std` to take one from, a `BTreeMap`
+/// otherwise. Only the *builders* touch it, and only once per key;
+/// reading a flat buffer never does. But building is measured
+/// (`docs/ZEROCOPY.md`), so the faster map is used where it exists rather
+/// than moving everyone to `BTreeMap` for the benefit of the target that
+/// has no choice.
+#[cfg(feature = "std")]
+pub(crate) type Interner<K> = std::collections::HashMap<K, (u32, u32)>;
+#[cfg(not(feature = "std"))]
+pub(crate) type Interner<K> = alloc::collections::BTreeMap<K, (u32, u32)>;
 
 /// `"JFL1"` little-endian.
 pub const MAGIC: u32 = u32::from_le_bytes(*b"JFL1");
@@ -167,7 +185,7 @@ impl core::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 // =====================================================================
 // Builder
@@ -239,7 +257,7 @@ impl Builder {
             strings: Vec::new(),
             sort_keys: self.sort_keys,
             intern: self.intern,
-            seen: std::collections::HashMap::new(),
+            seen: Interner::new(),
         };
         // Reserve node 0 for the root, then fill it in place.
         w.nodes.push((0, 0));
@@ -291,7 +309,7 @@ struct Writer {
     sort_keys: bool,
     intern: Intern,
     /// Interned string -> (offset, len) in the blob.
-    seen: std::collections::HashMap<String, (u32, u32)>,
+    seen: Interner<String>,
 }
 
 impl Writer {
@@ -381,7 +399,7 @@ impl Writer {
 
                 // Decode keys once here rather than on every read, and sort
                 // so `Ref::get` can binary search.
-                let mut pairs: Vec<(std::borrow::Cow<'_, str>, Value<'_>)> =
+                let mut pairs: Vec<(Cow<'_, str>, Value<'_>)> =
                     Vec::with_capacity(count as usize);
                 for (k, val) in v.entries() {
                     pairs.push((crate::unescape::unescape(k).ok_or(Error::BadUtf8)?, val));

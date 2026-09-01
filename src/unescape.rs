@@ -8,15 +8,23 @@
 //! This module provides both: [`unescape`] is correct, and
 //! [`unescape_vela_lossy`] reproduces the Vela behaviour so the port can be
 //! differentially tested against it.
-
-use std::borrow::Cow;
+//!
+//! # Without an allocator
+//!
+//! Expanding an escape needs somewhere to expand into, so [`unescape`]
+//! needs `alloc`. Most strings contain no escape, though, and for those
+//! the answer is a subslice of the input. [`borrow_str`] and
+//! [`borrow_str_checked`] return exactly that case and decline the rest,
+//! so they are available with no allocator at all — which is what lets
+//! [`crate::pull`] read strings on a target with no heap.
 
 /// Decode JSON escapes, including `\uXXXX` and surrogate pairs.
 ///
 /// Returns `None` if the input is not valid UTF-8 or contains a malformed
 /// escape. Borrows when there is no backslash to process.
+#[cfg(feature = "alloc")]
 #[must_use]
-pub fn unescape(raw: &[u8]) -> Option<Cow<'_, str>> {
+pub fn unescape(raw: &[u8]) -> Option<alloc::borrow::Cow<'_, str>> {
     unescape_inner(raw, false)
 }
 
@@ -27,16 +35,48 @@ pub fn unescape(raw: &[u8]) -> Option<Cow<'_, str>> {
 /// and non-ASCII, so it costs one more compare per byte instead of a
 /// second traversal. Done as a separate pass it measured **9.9%** of
 /// streaming deserialization — see `docs/PROFILING.md`.
+#[cfg(feature = "alloc")]
 #[must_use]
-pub fn unescape_checked(raw: &[u8]) -> Option<Cow<'_, str>> {
+pub fn unescape_checked(raw: &[u8]) -> Option<alloc::borrow::Cow<'_, str>> {
     unescape_inner(raw, true)
 }
 
+/// The string as a subslice of the input, if it can be one.
+///
+/// `Some` when `raw` contains no backslash and is valid UTF-8 — the
+/// common case, and the whole of the input for most documents. `None`
+/// when it contains an escape, so decoding it would need a buffer, or
+/// when it is not valid UTF-8.
+///
+/// Those two are deliberately not distinguished. Without an allocator
+/// there is nothing useful to do with the difference, and the failure is
+/// the safe direction: a caller that treats `None` as a rejection rejects
+/// a well-formed escaped string, rather than accepting a malformed one.
+/// A caller that wants the escaped bytes has them already —
+/// [`crate::pull::Raw::bytes`].
+///
+/// Allocates nothing, and needs no allocator to exist.
+#[must_use]
+pub fn borrow_str(raw: &[u8]) -> Option<&str> {
+    borrow_inner(raw, false)
+}
+
+/// [`borrow_str`], also rejecting the raw control bytes that RFC 8259
+/// forbids inside a string. This is what [`unescape_checked`] is to
+/// [`unescape`].
+#[must_use]
+pub fn borrow_str_checked(raw: &[u8]) -> Option<&str> {
+    borrow_inner(raw, true)
+}
+
+/// What the classification pass found: `(has_backslash, has_high_bit,
+/// has_control)`.
+///
+/// One pass answers every question. The obvious spelling —
+/// `raw.contains(&b'\\')` then `str::from_utf8(raw)` — walks the string
+/// twice, and this runs once per string field during deserialization.
 #[inline]
-fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<Cow<'_, str>> {
-    // One pass answers every question. The obvious spelling —
-    // `raw.contains(&b'\\')` then `str::from_utf8(raw)` — walks the string
-    // twice, and this runs once per string field during deserialization.
+fn classify(raw: &[u8]) -> (bool, bool, bool) {
     let mut backslash = 0u8;
     let mut high = 0u8;
     let mut ctrl = 0u8;
@@ -45,18 +85,41 @@ fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<Cow<'_, str>> {
         high |= b;
         ctrl |= u8::from(b < 0x20);
     }
-    if reject_control && ctrl != 0 {
+    (backslash != 0, high & 0x80 != 0, ctrl != 0)
+}
+
+#[inline]
+fn borrow_inner(raw: &[u8], reject_control: bool) -> Option<&str> {
+    let (backslash, high, ctrl) = classify(raw);
+    if backslash || (reject_control && ctrl) {
+        return None;
+    }
+    if !high {
+        // SAFETY: every byte is < 0x80, and all-ASCII is by definition
+        // valid UTF-8. `classify` is exhaustive over `raw`, so this needs
+        // no invariant from anywhere else in the crate.
+        return Some(unsafe { core::str::from_utf8_unchecked(raw) });
+    }
+    core::str::from_utf8(raw).ok()
+}
+
+#[cfg(feature = "alloc")]
+#[inline]
+fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<alloc::borrow::Cow<'_, str>> {
+    use alloc::borrow::Cow;
+    use alloc::string::String;
+
+    let (backslash, high, ctrl) = classify(raw);
+    if reject_control && ctrl {
         return None;
     }
 
-    if backslash == 0 {
-        if high & 0x80 == 0 {
-            // SAFETY: every byte is < 0x80, and all-ASCII is by definition
-            // valid UTF-8. The check above is exhaustive over `raw`, so this
-            // needs no invariant from anywhere else in the crate.
-            return Some(Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(raw) }));
+    if !backslash {
+        if !high {
+            // SAFETY: as in `borrow_inner` — all-ASCII is valid UTF-8.
+            return Some(Cow::Borrowed(unsafe { core::str::from_utf8_unchecked(raw) }));
         }
-        return std::str::from_utf8(raw).ok().map(Cow::Borrowed);
+        return core::str::from_utf8(raw).ok().map(Cow::Borrowed);
     }
 
     let mut out = String::with_capacity(raw.len());
@@ -70,7 +133,7 @@ fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<Cow<'_, str>> {
             while raw.get(i).is_some_and(|&c| c != b'\\') {
                 i += 1;
             }
-            out.push_str(std::str::from_utf8(raw.get(start..i)?).ok()?);
+            out.push_str(core::str::from_utf8(raw.get(start..i)?).ok()?);
             continue;
         }
 
@@ -115,6 +178,9 @@ fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<Cow<'_, str>> {
     Some(Cow::Owned(out))
 }
 
+/// Only the expanding path decodes `\uXXXX`, so like it this needs
+/// somewhere to expand into.
+#[cfg(feature = "alloc")]
 #[inline]
 fn hex4(bytes: &[u8]) -> Option<u16> {
     let mut v = 0u16;
@@ -141,8 +207,12 @@ fn hex4(bytes: &[u8]) -> Option<u16> {
 /// copied in bulk instead of one byte at a time.
 ///
 /// Kept for differential testing; do not use it for anything real.
+#[cfg(feature = "alloc")]
 #[must_use]
-pub fn unescape_vela_lossy(raw: &[u8]) -> String {
+pub fn unescape_vela_lossy(raw: &[u8]) -> alloc::string::String {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
     let mut out: Vec<u8> = Vec::with_capacity(raw.len());
     let mut i = 0usize;
 
@@ -193,6 +263,7 @@ pub fn unescape_vela_lossy(raw: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::borrow::Cow;
 
     #[test]
     fn borrows_when_clean() {

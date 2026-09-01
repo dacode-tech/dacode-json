@@ -59,7 +59,10 @@
 //! recover it; the simple version is measured first and `docs/ZEROCOPY.md`
 //! records what it costs.
 
-use super::{Error, HEADER, MAGIC, VERSION};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use super::{Error, Interner, HEADER, MAGIC, VERSION};
 
 /// Bytes per field slot.
 pub const SLOT: usize = 8;
@@ -150,7 +153,7 @@ pub struct TypedWriter<T: FlatSchema> {
     blob: Vec<u8>,
     offsets: Vec<u32>,
     count: u64,
-    seen: std::collections::HashMap<Box<str>, (u32, u32)>,
+    seen: Interner<Box<str>>,
     intern: bool,
     _marker: core::marker::PhantomData<fn() -> T>,
 }
@@ -169,7 +172,7 @@ impl<T: FlatSchema> TypedWriter<T> {
             blob: Vec::new(),
             offsets: Vec::new(),
             count: 0,
-            seen: std::collections::HashMap::new(),
+            seen: Interner::new(),
             intern: true,
             _marker: core::marker::PhantomData,
         }
@@ -713,7 +716,10 @@ pub mod de {
     use serde::de::{
         self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor,
     };
-    use std::fmt;
+    use alloc::format;
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+    use core::fmt;
 
     /// Deserialisation failure.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -724,7 +730,7 @@ pub mod de {
             f.write_str(&self.0)
         }
     }
-    impl std::error::Error for Error {}
+    impl core::error::Error for Error {}
     impl de::Error for Error {
         fn custom<T: fmt::Display>(msg: T) -> Self {
             Error(msg.to_string())

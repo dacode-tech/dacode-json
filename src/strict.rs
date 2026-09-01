@@ -20,6 +20,8 @@
 //! decoded lazily by [`crate::query::Value::as_str`]. That is the good part
 //! of the design and there is no reason to give it up.
 
+use alloc::vec::Vec;
+
 use crate::builder::workspace_pool_capacity_for;
 use crate::pool::{Level, Pool, STACK_MAX};
 use crate::query::Doc;
@@ -104,7 +106,7 @@ impl core::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 /// What the grammar allows at the current position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

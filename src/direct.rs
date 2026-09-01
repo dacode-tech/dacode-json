@@ -37,6 +37,8 @@
 
 use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
+use alloc::borrow::Cow;
+
 use crate::stream::{expect_lit, parse_number, validate_number, Error, Num};
 
 type Result<T> = core::result::Result<T, Error>;
@@ -386,8 +388,8 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
                     return Err(err(at, "invalid UTF-8 in string"));
                 }
                 match crate::unescape::unescape_checked(raw) {
-                    Some(std::borrow::Cow::Borrowed(s)) => visitor.visit_borrowed_str(s),
-                    Some(std::borrow::Cow::Owned(s)) => visitor.visit_string(s),
+                    Some(Cow::Borrowed(s)) => visitor.visit_borrowed_str(s),
+                    Some(Cow::Owned(s)) => visitor.visit_string(s),
                     None => Err(err(at, "invalid escape or UTF-8 in string")),
                 }
             }
@@ -601,8 +603,8 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
         let key = crate::unescape::unescape_checked(raw)
             .ok_or_else(|| err(at, "invalid escape or UTF-8 in key"))?;
         match key {
-            std::borrow::Cow::Borrowed(s) => seed.deserialize(BorrowedStr(s)).map(Some),
-            std::borrow::Cow::Owned(s) => seed.deserialize(s.into_deserializer()).map(Some),
+            Cow::Borrowed(s) => seed.deserialize(BorrowedStr(s)).map(Some),
+            Cow::Owned(s) => seed.deserialize(s.into_deserializer()).map(Some),
         }
     }
 
@@ -708,7 +710,7 @@ impl<'de> de::Deserializer<'de> for BorrowedStr<'de> {
         visitor: V,
     ) -> Result<V::Value> {
         visitor.visit_enum(UnitVariant {
-            name: std::borrow::Cow::Borrowed(self.0),
+            name: Cow::Borrowed(self.0),
         })
     }
 
@@ -720,7 +722,7 @@ impl<'de> de::Deserializer<'de> for BorrowedStr<'de> {
 }
 
 struct UnitVariant<'de> {
-    name: std::borrow::Cow<'de, str>,
+    name: Cow<'de, str>,
 }
 
 impl<'de> de::EnumAccess<'de> for UnitVariant<'de> {
@@ -729,8 +731,8 @@ impl<'de> de::EnumAccess<'de> for UnitVariant<'de> {
 
     fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, UnitPayload)> {
         let v = match self.name {
-            std::borrow::Cow::Borrowed(s) => seed.deserialize(BorrowedStr(s))?,
-            std::borrow::Cow::Owned(s) => seed.deserialize(s.into_deserializer())?,
+            Cow::Borrowed(s) => seed.deserialize(BorrowedStr(s))?,
+            Cow::Owned(s) => seed.deserialize(s.into_deserializer())?,
         };
         Ok((v, UnitPayload))
     }
@@ -778,8 +780,8 @@ impl<'a, 'de> de::EnumAccess<'de> for VariantAccess<'a, 'de> {
         let name = crate::unescape::unescape_checked(raw)
             .ok_or_else(|| err(at, "invalid variant name"))?;
         let v = match name {
-            std::borrow::Cow::Borrowed(s) => seed.deserialize(BorrowedStr(s))?,
-            std::borrow::Cow::Owned(s) => seed.deserialize(s.into_deserializer())?,
+            Cow::Borrowed(s) => seed.deserialize(BorrowedStr(s))?,
+            Cow::Owned(s) => seed.deserialize(s.into_deserializer())?,
         };
         let depth = self.depth;
         Ok((v, Payload { c: self.c, depth }))
@@ -879,7 +881,7 @@ mod tests {
             }
             // A raw control byte, which cannot go through format!.
             let mut src = vec![b'"'];
-            src.extend(std::iter::repeat_n(b'a', pad));
+            src.extend(core::iter::repeat_n(b'a', pad));
             src.push(0x09);
             src.push(b'"');
             let got = scan(&src).unwrap_or_else(|| panic!("ctrl pad={pad}"));

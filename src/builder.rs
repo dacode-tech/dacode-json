@@ -19,6 +19,8 @@
 //! * Nothing is validated. Malformed input yields a well-formed but wrong
 //!   pool rather than an error. Use [`crate::strict`] if you need errors.
 
+use alloc::vec::Vec;
+
 use crate::pool::{Level, Pool, STACK_MAX};
 use crate::scalar::{parse_scalar_fast, skip_ws};
 use crate::scan::StructuralIndex;

@@ -6,6 +6,10 @@
 //! The shapes mirror the workloads Vela measures in
 //! `bootstrap/tests/velac2/t860_json_fair_bench.vl` and `t861_json_bench_10mb.vl`.
 
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 /// A tiny xorshift PRNG — reproducible and dependency-free.
 #[derive(Debug, Clone)]
 pub struct Rng(u64);

@@ -57,6 +57,8 @@
 //! # Ok::<(), dacodec::Error>(())
 //! ```
 
+use alloc::string::String;
+use alloc::vec::Vec;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -87,8 +89,8 @@ impl core::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for Error {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Error::Parse(e) => Some(e),
             Error::Deserialize(e) => Some(e),
@@ -171,6 +173,9 @@ pub fn from_slice<T: DeserializeOwned>(v: &[u8]) -> Result<T> {
 /// Provided for parity with `serde_json::from_reader`. It buffers the whole
 /// input first — this parser is not incremental, and pretending otherwise
 /// would be slower, not faster.
+///
+/// The only thing in the typed API that needs an OS.
+#[cfg(feature = "std")]
 pub fn from_reader<R: std::io::Read, T: serde::de::DeserializeOwned>(mut r: R) -> Result<T> {
     let mut buf = Vec::new();
     r.read_to_end(&mut buf)

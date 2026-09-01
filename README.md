@@ -82,8 +82,9 @@ That is the same trade simdjson's On-Demand API makes, and it is why this is
 a separate function rather than a quiet speed-up of `from_slice`. Call
 [`validate`] first if you need both.
 
-Nothing here allocates — no index, no pool, no `String` — so it is also the
-path to use where an allocator is scarce.
+Nothing here allocates — no index, no pool, no `String`, and nothing on the
+error path either — so it is also the path to use where there is no
+allocator at all. See [`no_std`](#no_std) below.
 
 ### Against the C and C++ libraries
 
@@ -289,6 +290,7 @@ cargo test --all-features        # + the C baselines (needs a C/C++ compiler)
 cargo test --doc                 # the examples in the API docs
 cargo run --example readme       # the examples on this page
 cargo clippy --all-targets
+tools/check-features.sh          # every feature combination + two cross targets
 ```
 
 Clippy is clean at every feature combination, not just the default one.
@@ -425,11 +427,33 @@ high-precision literals it deviates on 17.7%, by up to 2 ULP.
 
 | feature | default | what |
 |---|---|---|
-| `serde` | ✅ | the public API; without it only the low-level parser is available |
+| `std` | ✅ | an operating system: `from_reader`, and the measurement machinery |
+| `serde` | ✅ | the public API; implies `alloc` |
+| `alloc` | | an allocator, but no OS: the node pool, `strict`, the `flat` builders |
 | `vela-compat` | | the Vela tier ports (`tiers`, `onepass`) — see below |
 | `fuzzing` | | the differential fuzz harness (implies `vela-compat`) |
 | `cbench` | | vendored yyjson and simdjson, for benchmarking (needs a C/C++ compiler) |
 | `profiling` | | the CPU and memory profiling binaries |
+
+### `no_std`
+
+`--no-default-features` builds for a bare-metal target with no operating
+system and no allocator:
+
+```toml
+dacodec = { version = "0.1", default-features = false }
+```
+
+What survives is `pull` (read fields out of a document), `write` (build one
+into a `&mut [u8]`), the shared error type, and the byte classifiers.
+Nothing in that set allocates, on any path — `tests/error_alloc.rs` holds
+the error path to a literal zero across 19 malformed inputs.
+
+`tools/check-features.sh` builds every combination, plus
+`thumbv7em-none-eabihf` (Cortex-M4F, no allocator) and
+`armv7-unknown-linux-gnueabihf` (32-bit, full `std`), so a `std`-ism cannot
+creep back in unnoticed. [`docs/NOSTD.md`](docs/NOSTD.md) records what is in
+each tier and the decisions behind the split.
 
 ### A warning about `vela-compat`
 
@@ -458,6 +482,7 @@ parser that accepts truncated input.
 | [`docs/CBASELINE.md`](docs/CBASELINE.md) | measured against yyjson and simdjson in C |
 | [`docs/TIERS.md`](docs/TIERS.md) | the reference implementations this began as |
 | [`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md) | panic-free design study |
+| [`docs/NOSTD.md`](docs/NOSTD.md) | the `no_std` split, and what `std` actually buys |
 
 ---
 

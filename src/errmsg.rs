@@ -25,7 +25,11 @@ pub(crate) enum Msg {
     Static(&'static str),
     /// Text from `serde`'s `Error::custom`, which is only available as a
     /// `Display` and so has to be rendered somewhere.
-    #[cfg(feature = "alloc")]
+    ///
+    /// Both gates are load-bearing: `alloc` for somewhere to put the
+    /// text, `serde` because nothing else in the crate produces a message
+    /// it does not already own as a literal.
+    #[cfg(all(feature = "alloc", feature = "serde"))]
     Custom(alloc::boxed::Box<str>),
 }
 
@@ -34,6 +38,7 @@ impl Msg {
     ///
     /// With `alloc`, this keeps the text. Without it, the text is
     /// discarded — see the module docs.
+    #[cfg(feature = "serde")]
     pub(crate) fn custom<T: fmt::Display>(msg: T) -> Self {
         #[cfg(feature = "alloc")]
         {
@@ -52,7 +57,7 @@ impl fmt::Display for Msg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Msg::Static(s) => f.write_str(s),
-            #[cfg(feature = "alloc")]
+            #[cfg(all(feature = "alloc", feature = "serde"))]
             Msg::Custom(s) => f.write_str(s),
         }
     }

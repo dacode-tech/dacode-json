@@ -26,6 +26,8 @@
 //! children alternate `Key, value, Key, value, ...`. `pool_skip_subtree`
 //! (see [`crate::query`]) depends on this.
 
+use alloc::vec::Vec;
+
 use crate::tag::{make_tag, tag_aux, tag_type, Type};
 
 /// One 16-byte pool node.

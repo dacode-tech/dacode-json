@@ -21,7 +21,24 @@
 //! | [`from_str`], [`to_string`] and friends | the `serde_json`-shaped API |
 //! | [`Parser`] | reusable buffers; no allocation in steady state |
 //! | [`flat`] | a zero-copy wire format — read a field in nanoseconds, no parsing |
+//! | [`pull`], [`write`] | read and write JSON with no allocator at all |
 //! | `tiers`, `onepass` | reference implementations, for measurement (`vela-compat` feature) |
+//!
+//! # `no_std`
+//!
+//! `--no-default-features` gives a crate that builds for a bare-metal
+//! target with no OS and no allocator — [`pull`] to read fields out of a
+//! document, [`write`] to build one into a `&mut [u8]`, and the byte
+//! classifiers. Neither allocates, including on the error path.
+//!
+//! ```toml
+//! dacodec = { version = "0.1", default-features = false }            # core
+//! dacodec = { version = "0.1", default-features = false, features = ["alloc"] }
+//! ```
+//!
+//! `alloc` adds the node pool and the [`flat`] builders; `std` adds
+//! [`from_reader`] and the measurement machinery; `serde` adds the typed
+//! API. See `docs/NOSTD.md` for what is in each tier and why.
 //!
 //! # Zero-copy
 //!
@@ -78,81 +95,119 @@
     )
 )]
 
-// Not `no_std` yet — that is the next step — but the error types below
-// already avoid the allocator, and `Msg::Custom` needs to name `Box<str>`
-// from a crate that will still exist once `std` is gone.
+#![cfg_attr(not(feature = "std"), no_std)]
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
 mod errmsg;
 
-#[cfg(feature = "cbench")]
-pub mod cbench;
-// `fuzz` cross-checks the reference tiers, so it needs `vela-compat`,
-// which `fuzzing` pulls in. Gating it on `profiling` alone broke
-// `--features profiling` once the tiers became optional.
-#[cfg(feature = "fuzzing")]
-pub mod fuzz;
+// =====================================================================
+// Modules, grouped by what they need
+// =====================================================================
+//
+// The grouping is the point, not decoration: `--no-default-features`
+// leaves the first group and nothing else, and that is the surface an
+// embedded target gets. See `docs/NOSTD.md`.
+
+// --- neither an allocator nor an OS ----------------------------------
+
+/// On-demand extraction: pull named fields, skip the rest wholesale.
+/// Allocates nothing. See the module docs for the validation trade.
+pub mod pull;
+pub mod scalar;
+pub mod scan;
+pub mod stream;
+pub mod tag;
+pub mod unescape;
+/// Writing JSON into a caller-supplied buffer, with no allocation.
+pub mod write;
+
+// --- an allocator, but no OS -----------------------------------------
+
+#[cfg(feature = "alloc")]
 pub mod builder;
+#[cfg(feature = "alloc")]
 pub mod corpus;
-pub mod memstat;
+#[cfg(feature = "alloc")]
 pub mod flat;
-#[cfg(feature = "serde")]
-pub mod de;
-#[cfg(feature = "serde")]
-pub mod ser;
+#[cfg(feature = "alloc")]
+pub mod pool;
+#[cfg(feature = "alloc")]
+pub mod query;
+#[cfg(feature = "alloc")]
+pub mod strict;
+#[cfg(feature = "alloc")]
+pub mod workspace;
+
 /// Vela's single-pass builder. Requires the `vela-compat` feature.
 ///
 /// A reference implementation, not the recommended parser: it does not
 /// validate and truncates floats. Use [`strict`] or the crate root.
-#[cfg(feature = "vela-compat")]
+#[cfg(all(feature = "alloc", feature = "vela-compat"))]
 pub mod onepass;
-pub mod pool;
-pub mod query;
-pub mod scalar;
-pub mod scan;
-/// A no-index streaming deserializer, for measuring what Stage 1 is
-/// worth. See `docs/RESULTS.md`.
-#[cfg(feature = "serde")]
-pub mod direct;
-/// On-demand extraction: pull named fields, skip the rest wholesale.
-/// Allocates nothing. See the module docs for the validation trade.
-#[cfg(feature = "serde")]
-pub mod pull;
-/// Writing JSON into a caller-supplied buffer, with no allocation.
-#[cfg(feature = "serde")]
-pub mod write;
-pub mod stream;
-pub mod strict;
 /// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`
 /// feature.
 ///
 /// Reference implementations kept for measurement. They do not validate
 /// and they truncate floats, because Vela's do. Use [`strict`] or the
 /// crate root for anything real; see `docs/TIERS.md`.
-#[cfg(feature = "vela-compat")]
+#[cfg(all(feature = "alloc", feature = "vela-compat"))]
 pub mod tiers;
-pub mod unescape;
-pub mod workspace;
 
+// --- `serde`, which implies an allocator -----------------------------
+
+#[cfg(feature = "serde")]
 pub mod api;
+#[cfg(feature = "serde")]
+pub mod de;
+/// A no-index streaming deserializer, for measuring what Stage 1 is
+/// worth. See `docs/RESULTS.md`.
+#[cfg(feature = "serde")]
+pub mod direct;
+#[cfg(feature = "serde")]
+pub mod ser;
+
+// --- an OS ------------------------------------------------------------
+
+#[cfg(all(feature = "std", feature = "cbench"))]
+pub mod cbench;
+// `fuzz` cross-checks the reference tiers, so it needs `vela-compat`,
+// which `fuzzing` pulls in. Gating it on `profiling` alone broke
+// `--features profiling` once the tiers became optional.
+#[cfg(all(feature = "std", feature = "fuzzing"))]
+pub mod fuzz;
+#[cfg(feature = "std")]
+pub mod memstat;
+
+// =====================================================================
+// Re-exports
+// =====================================================================
+
+#[cfg(feature = "serde")]
 pub use api::{
-    from_reader, from_slice, from_str, to_string, to_vec, to_writer, validate, Document,
-    Error, Parser, Result, ValueRef,
+    from_slice, from_str, to_string, to_vec, to_writer, validate, Document, Error, Parser, Result,
+    ValueRef,
 };
+#[cfg(all(feature = "serde", feature = "std"))]
+pub use api::from_reader;
 
+#[cfg(feature = "alloc")]
 pub use pool::{Node, Pool};
+#[cfg(feature = "alloc")]
 pub use query::{Doc, Value};
-pub use scan::{Scanner, StructuralIndex};
-pub use tag::Type;
+#[cfg(feature = "alloc")]
+pub use scan::StructuralIndex;
+#[cfg(feature = "alloc")]
 pub use workspace::Workspace;
-
-pub mod tag;
+pub use scan::Scanner;
+pub use tag::Type;
 
 /// Parse into an owned [`Pool`] with a fresh allocation — Vela's
 /// `json_pool_parse_fast`.
 ///
 /// Prefer [`Workspace`] when parsing more than once.
+#[cfg(feature = "alloc")]
 #[must_use]
 pub fn parse_to_pool(input: &[u8]) -> Pool {
     workspace::parse_to_pool(input)
