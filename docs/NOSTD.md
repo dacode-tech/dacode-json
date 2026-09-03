@@ -29,6 +29,7 @@ dacodec = { version = "0.1", default-features = false }
 | `tag` | the node type tags |
 | `unescape::borrow_str` | a string as a subslice, when it can be one |
 | `stream::Integer` | the widths `pull::Raw::as_int` reads into |
+| `flat`'s readers | `View`, `Ref`, `TypedView`, `StrList` — see below |
 
 Nothing here allocates, on any path, including the error path —
 `tests/error_alloc.rs` holds it to a literal zero across 19 malformed
@@ -41,8 +42,22 @@ needs it.
 ### `--features alloc` — an allocator, but no OS
 
 Adds `pool`, `query`, `builder`, `workspace`, `strict`, `corpus`, the
-`flat` builders, `unescape`'s expanding path, and `scan`'s
+`flat` *builders*, `unescape`'s expanding path, and `scan`'s
 `StructuralIndex`.
+
+#### Why `flat` is split rather than gated
+
+Reading a `jsonflat` buffer needs no allocator and never did: `View::new`
+validates a 32-byte header, and every accessor after it is arithmetic on
+a borrowed slice. Building one does, because the output length is not
+known until the walk is done. So the module is available with no
+features and the builders inside it are gated, rather than the whole
+module being gated on `alloc` because it happens to contain both.
+
+Build on a host, read on a device. It is the cheapest read path in the
+crate — 2 118 bytes linked for random access to a whole document, where
+`pull` costs 2 102 for one named field per pass — and the buffer can come
+from `mmap`, from flash, or from a `&'static [u8]` in the image.
 
 ### `--features std` — an OS
 

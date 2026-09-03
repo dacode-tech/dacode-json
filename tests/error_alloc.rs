@@ -92,6 +92,26 @@ fn rejecting_bad_input_does_not_allocate() {
         assert_eq!(n, 0, "direct::from_slice({src:?}) allocated {n} times");
     }
 
+    // --- sharing a parsed document across threads costs nothing -------
+    //
+    // `thread::spawn` needs `'static`, so a borrowing `Doc` cannot be
+    // moved into one; the advice is to `Arc` the *storage* and rebuild
+    // the handle per thread. That is only good advice if rebuilding is
+    // free, so: `Document::new` pairs two references, and `View::new`
+    // checks a 32-byte header. See `tests/thread_safety.rs`.
+    let bytes = br#"[{"a":1},{"a":2}]"#;
+    let pool = dacodec::strict::parse_to_pool(bytes).expect("parse");
+    let flat = dacodec::flat::encode(dacodec::Document::new(bytes, &pool)).expect("encode");
+    let _ = dacodec::Document::new(bytes, &pool).root().len();
+    let _ = dacodec::flat::View::new(&flat).map(|v| v.root().len());
+
+    let n = allocs(|| {
+        let doc = dacodec::Document::new(bytes, &pool);
+        let view = dacodec::flat::View::new(&flat).expect("view");
+        doc.root().len() + view.root().len()
+    });
+    assert_eq!(n, 0, "rebuilding a Doc and a View allocated {n} times");
+
     messages_still_say_what_and_where();
 }
 

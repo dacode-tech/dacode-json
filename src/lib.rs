@@ -118,6 +118,10 @@ mod errmsg;
 // `pub mod` is concatenated with the module's own `//!` docs but
 // resolved in *this* module's scope, so every intra-doc link in the
 // merged text breaks. Each module introduces itself.
+// `flat` sits here rather than under `alloc` because *reading* a buffer
+// needs no allocator — the builders inside it are gated instead. See its
+// own docs.
+pub mod flat;
 pub mod pull;
 pub mod scalar;
 pub mod scan;
@@ -132,8 +136,6 @@ pub mod write;
 pub mod builder;
 #[cfg(feature = "alloc")]
 pub mod corpus;
-#[cfg(feature = "alloc")]
-pub mod flat;
 #[cfg(feature = "alloc")]
 pub mod pool;
 #[cfg(feature = "alloc")]

@@ -63,6 +63,7 @@ Bytes of `.text` + `.rodata`, with the floor subtracted.
 |---|---:|---:|---:|
 | `pull`, locating fields only | **1 742** | 130 | 1 612 |
 | `pull` + `as_int::<i32>` | **2 102** | 122 | 1 980 |
+| `flat`, read-only | **2 118** | 858 | 1 260 |
 | `pull` + `as_int` at three widths | **2 890** | 146 | 2 744 |
 | `write` | **5 896** | 3 686 | 2 210 |
 | `pull` + `as_i64` | **24 486** | 19 496 | 4 990 |
@@ -83,6 +84,7 @@ supplies it, so the total is what actually lands in flash.
 |---|---:|---:|---:|
 | `pull`, locating fields only | 1 742 | 2 058 | 5 228 |
 | `pull` + `as_int::<i32>` | 2 102 | 2 730 | 5 278 |
+| `flat`, read-only | 2 118 | 2 446 | 3 550 |
 | `pull` + `as_int`, three widths | 2 890 | 3 298 | 6 864 |
 | `write` | 5 896 | 4 196 | 4 640 |
 | `pull` + `as_i64` | 24 486 | 25 050 | 29 262 |
@@ -126,6 +128,25 @@ ledger: `dacodec` keeps `core`'s correct one, and 13 KB of flash is a
 real thing to weigh against 2 ULP — so the answer is to let a caller
 that does not need floats not pay for them, rather than to make the
 float parser worse.
+
+### `flat` is the cheapest way to read a whole document
+
+2 118 bytes, of which 1 260 is the library, for random access to every
+field of every record — where `pull` at 2 102 gives you one named field
+per pass and nothing else.
+
+That is not a parser, which is the point. The buffer is built on a host
+and `View::new` validates a 32-byte header; every accessor after that is
+arithmetic on a borrowed slice. So the readers need no allocator, and
+`flat` is available with `--no-default-features` while its *builders*
+stay gated on `alloc` — the output length is not known until the walk is
+done.
+
+The row carries 471 bytes of `.rodata` for the buffer itself, which the
+other rows do not. That is data, not code: on a real device it is an
+`mmap` or a flash address, not part of the image. `tools/size.sh` also
+touches `INPUT` in this binary so the floor being subtracted is the same
+floor as everywhere else.
 
 ### An `f32` accessor would not have helped
 

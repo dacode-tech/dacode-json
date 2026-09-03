@@ -19,6 +19,9 @@ size/
   src/bin/pullint3.rs   as_int at three widths — what the choice costs
                         when it is actually used
   src/bin/write.rs    dacodec::write, no allocator
+  src/bin/flatread.rs   dacodec::flat, read-only, no allocator. Carries a
+                        pre-encoded buffer generated from the same input;
+                        regenerate it with the snippet in src/lib.rs
   src/bin/direct.rs   dacodec through serde, with an allocator
   src/bin/serdejson.rs  serde_json, no_std + alloc
   cbase/              the C contenders and their freestanding libc shims

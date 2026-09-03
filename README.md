@@ -291,7 +291,27 @@ there is not even a `Once` to reason about. Nothing in the crate needs a
 lock, because nothing in it is shared mutable state.
 
 So a `Doc` or a `flat::View` goes straight into `rayon`, an error crosses a
-channel, and a `Parser` lives in a thread pool slot. `tests/thread_safety.rs`
+channel, and a `Parser` lives in a thread pool slot. **You never need to
+copy to share.** A `Doc` is `(&[u8], &Pool)` and a `flat::View` is a
+`&[u8]` plus six integers, so both are cheap handles onto storage someone
+else owns:
+
+```rust
+// Scoped threads: share the handle itself. No Arc, no clone.
+let doc = ws.parse(bytes);
+std::thread::scope(|s| {
+    for _ in 0..4 { s.spawn(|| read(&doc)); }
+});
+
+// 'static threads: Arc the *storage*, rebuild the handle. `Document::new`
+// pairs two references and `View::new` checks a 32-byte header, so this
+// is neither a parse nor a copy — measured at zero allocations.
+let shared = Arc::new((bytes, pool));
+for _ in 0..4 {
+    let shared = Arc::clone(&shared);
+    std::thread::spawn(move || read(Document::new(&shared.0, &shared.1)));
+}
+``` `tests/thread_safety.rs`
 asserts the auto traits at compile time — a type losing `Send` is a build
 failure, not a silent semver break — and then hammers every entry point from
 eight threads in case the types are lying. It is clean under
@@ -479,9 +499,14 @@ dacodec = { version = "0.1", default-features = false }
 ```
 
 What survives is `pull` (read fields out of a document), `write` (build one
-into a `&mut [u8]`), the shared error type, and the byte classifiers.
-Nothing in that set allocates, on any path — `tests/error_alloc.rs` holds
-the error path to a literal zero across 19 malformed inputs.
+into a `&mut [u8]`), **`flat`'s readers**, the shared error type, and the
+byte classifiers. Nothing in that set allocates, on any path —
+`tests/error_alloc.rs` holds the error path to a literal zero across 19
+malformed inputs.
+
+`flat` is split rather than gated: reading a buffer needs no allocator, and
+only the builders do. Build on a host, `mmap` on the device — 2 118 bytes
+linked, for random access to a whole document.
 
 `tools/check-features.sh` builds every combination, plus
 `thumbv7em-none-eabihf` (Cortex-M4F, no allocator) and
@@ -498,6 +523,7 @@ a fixed buffer and sum a field. `.text` + `.rodata`, floor subtracted:
 |---|---:|
 | `pull`, locating fields only | **1 742** |
 | `pull` + `as_int::<i32>` | **2 102** |
+| `flat`, read-only | **2 118** |
 | `write` | **5 896** |
 | `pull` + `as_i64` | 24 486 |
 | `serde_json` (`no_std` + `alloc`) | 29 964 |

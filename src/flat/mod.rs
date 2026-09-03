@@ -1,5 +1,18 @@
 //! `jsonflat` — a YaFF/FlatBuffers-style zero-copy wire format for JSON.
 //!
+//! **Reading a buffer needs no allocator.** [`View`], [`Ref`],
+//! [`typed::TypedView`] and [`typed::StrList`] are arithmetic on a
+//! borrowed slice — `View::new` is the entire "parse" step, and it is
+//! O(1) validation of a header. So this module is available with
+//! `--no-default-features`, and the buffer can come straight from
+//! `mmap`, from flash, or from a `&'static [u8]` linked into the image.
+//!
+//! *Building* a buffer needs one, because the output length is not known
+//! until the walk is done. [`Builder`], [`encode`] and
+//! [`typed::TypedWriter`] are therefore gated on `alloc`. Building on a
+//! host and reading on a device is the intended split, and it is what
+//! makes this the best embedded read path in the crate.
+//!
 //! # The question this answers
 //!
 //! [YaFF](https://github.com/yandex/yaff) gives Protobuf a zero-copy
@@ -66,12 +79,17 @@
 
 pub mod typed;
 
+use crate::tag::Type;
+
+#[cfg(feature = "alloc")]
 use alloc::borrow::{Cow, ToOwned};
+#[cfg(feature = "alloc")]
 use alloc::string::String;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
+#[cfg(feature = "alloc")]
 use crate::query::{Doc, Value};
-use crate::tag::Type;
 
 /// The builders' string-interning table: key -> `(offset, len)` in the
 /// blob.
@@ -84,7 +102,7 @@ use crate::tag::Type;
 /// has no choice.
 #[cfg(feature = "std")]
 pub(crate) type Interner<K> = std::collections::HashMap<K, (u32, u32)>;
-#[cfg(not(feature = "std"))]
+#[cfg(all(feature = "alloc", not(feature = "std")))]
 pub(crate) type Interner<K> = alloc::collections::BTreeMap<K, (u32, u32)>;
 
 /// `"JFL1"` little-endian.
@@ -126,6 +144,8 @@ const K_KEY: u32 = 7;
 const K_ARRAY: u32 = 8;
 const K_OBJECT: u32 = 9;
 
+/// Only the writer composes a tag; a reader only takes them apart.
+#[cfg(feature = "alloc")]
 #[inline]
 const fn make_tag(kind: u32, aux: u32) -> u32 {
     (aux << 4) | kind
@@ -192,6 +212,7 @@ impl core::error::Error for Error {}
 // =====================================================================
 
 /// Builds a `jsonflat` buffer from a parsed document.
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone)]
 pub struct Builder {
     sort_keys: bool,
@@ -216,6 +237,7 @@ pub enum Intern {
     All,
 }
 
+#[cfg(feature = "alloc")]
 impl Default for Builder {
     fn default() -> Self {
         Builder {
@@ -225,6 +247,7 @@ impl Default for Builder {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl Builder {
     #[must_use]
     pub fn new() -> Self {
@@ -302,6 +325,7 @@ impl Builder {
     }
 }
 
+#[cfg(feature = "alloc")]
 struct Writer {
     nodes: Vec<(u32, u32)>,
     numbers: Vec<u64>,
@@ -312,6 +336,7 @@ struct Writer {
     seen: Interner<String>,
 }
 
+#[cfg(feature = "alloc")]
 impl Writer {
     /// Append a string to the blob, deduplicating if configured.
     ///
@@ -438,6 +463,7 @@ impl Writer {
 }
 
 /// Encode a parsed document with default options.
+#[cfg(feature = "alloc")]
 pub fn encode(doc: Doc<'_>) -> Result<Vec<u8>, Error> {
     Builder::new().build(doc)
 }

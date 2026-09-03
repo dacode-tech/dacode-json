@@ -246,3 +246,105 @@ fn a_flat_buffer_can_be_read_from_many_threads() {
         }
     });
 }
+
+// =====================================================================
+// Sharing without copying
+// =====================================================================
+
+/// A parsed document is shared, not copied, and this shows what that
+/// looks like in both of the shapes a caller has.
+///
+/// The question this answers: "if I want to read one parsed document from
+/// several threads, do I have to clone it first?" No, and there is no
+/// arrangement in which you would. A `Doc` is `(&[u8], &Pool)` and a
+/// `flat::View` is a `&[u8]` plus six integers, so both are `Copy`-cheap
+/// handles onto storage someone else owns.
+///
+/// # Scoped threads: no `Arc`, no clone, nothing
+///
+/// `thread::scope` proves to the compiler that the threads end before the
+/// borrow does, so a plain `&Doc` crosses the boundary.
+///
+/// # `'static` threads: `Arc` the *storage*, not the document
+///
+/// `thread::spawn` needs `'static`, and a `Doc` borrows, so it cannot be
+/// moved into one. Put the two things it borrows in an `Arc` and rebuild
+/// the handle per thread: `Doc::new` and `View::new` are O(1) — a header
+/// check and some field assignments — so this is not a parse and not a
+/// copy. The bytes are read once, by whoever built the `Arc`.
+#[test]
+fn one_document_is_read_by_many_threads_without_copying() {
+    // --- scoped: share the handle itself ------------------------------
+    let mut ws = dacodec::Workspace::new();
+    let doc = ws.parse(DOC.as_bytes());
+    let doc_ref = &doc;
+    thread::scope(|s| {
+        for _ in 0..4 {
+            s.spawn(move || assert_eq!(score_of(*doc_ref), 66));
+        }
+    });
+
+    // --- 'static: share the storage, rebuild the handle ---------------
+    //
+    // `Arc<(Vec<u8>, Pool)>` — one allocation, made once. Each thread
+    // pairs them back into a `Doc`, which allocates nothing.
+    let owned: Arc<(Vec<u8>, dacodec::Pool)> = {
+        let bytes = DOC.as_bytes().to_vec();
+        let pool = dacodec::strict::parse_to_pool(&bytes).expect("parse");
+        Arc::new((bytes, pool))
+    };
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let owned = Arc::clone(&owned);
+        handles.push(thread::spawn(move || {
+            let doc = dacodec::Document::new(&owned.0, &owned.1);
+            assert_eq!(score_of(doc), 66);
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+
+    // --- the same for `flat`, which is the case this format is for ----
+    //
+    // One `Arc<Vec<u8>>`, or a `&'static [u8]` from `mmap` or flash.
+    // `View::new` validates a 32-byte header and returns; there is no
+    // per-thread cost beyond that.
+    let buf: Arc<Vec<u8>> = {
+        let mut ws = dacodec::Workspace::new();
+        let doc = ws.parse(DOC.as_bytes());
+        Arc::new(dacodec::flat::encode(doc).expect("encode"))
+    };
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let buf = Arc::clone(&buf);
+        handles.push(thread::spawn(move || {
+            let view = dacodec::flat::View::new(&buf).expect("view");
+            let total: i64 = view
+                .root()
+                .elements()
+                .filter_map(|r| r.get("score"))
+                .filter_map(|v| v.as_i64())
+                .sum();
+            assert_eq!(total, 66);
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+}
+
+fn score_of(doc: dacodec::Document<'_>) -> i64 {
+    doc.root()
+        .elements()
+        .filter_map(|r| r.get("score"))
+        .filter_map(|v| v.as_i64())
+        .sum()
+}
+
+// The claim above — that rebuilding a handle per thread costs nothing —
+// is measured in `tests/error_alloc.rs`, not here. Counting allocations
+// needs `memstat::Counter` installed as the global allocator, and that
+// file is the one that installs it. Asserting it here would have been
+// vacuous: with no `Counter`, `rust_allocs()` never moves and the
+// assertion passes for the wrong reason.

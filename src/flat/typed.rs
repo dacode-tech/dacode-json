@@ -60,10 +60,15 @@
 //! recover it; the simple version is measured first and `docs/ZEROCOPY.md`
 //! records what it costs.
 
+use super::{Error, HEADER, MAGIC, VERSION};
+
+#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use super::{Error, Interner, HEADER, MAGIC, VERSION};
+#[cfg(feature = "alloc")]
+use super::Interner;
 
 /// Bytes per field slot.
 pub const SLOT: usize = 8;
@@ -148,6 +153,7 @@ pub const fn schema_id(names: &[&str], fields: &[FieldKind]) -> u64 {
 // =====================================================================
 
 /// Builds a typed buffer.
+#[cfg(feature = "alloc")]
 #[derive(Debug)]
 pub struct TypedWriter<T: FlatSchema> {
     records: Vec<u8>,
@@ -159,12 +165,14 @@ pub struct TypedWriter<T: FlatSchema> {
     _marker: core::marker::PhantomData<fn() -> T>,
 }
 
+#[cfg(feature = "alloc")]
 impl<T: FlatSchema> Default for TypedWriter<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T: FlatSchema> TypedWriter<T> {
     #[must_use]
     pub fn new() -> Self {
@@ -248,6 +256,7 @@ impl<T: FlatSchema> TypedWriter<T> {
 }
 
 /// Cursor for one record's fields, written in order.
+#[cfg(feature = "alloc")]
 #[derive(Debug)]
 pub struct RecordWriter<'a, T: FlatSchema> {
     w: &'a mut TypedWriter<T>,
@@ -255,6 +264,7 @@ pub struct RecordWriter<'a, T: FlatSchema> {
     slot: usize,
 }
 
+#[cfg(feature = "alloc")]
 impl<T: FlatSchema> RecordWriter<'_, T> {
     fn write8(&mut self, v: u64) {
         let at = self.base + self.slot * SLOT;
