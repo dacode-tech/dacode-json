@@ -68,3 +68,57 @@ impl From<&'static str> for Msg {
         Msg::Static(s)
     }
 }
+
+/// [`serde::de::Unexpected`] rendered the way `serde_json` renders it,
+/// without `core::fmt`'s float formatter.
+///
+/// Two divergences from serde's own `Display`, both of which
+/// `serde_json` also makes, because this is a drop-in replacement:
+///
+/// * `Unit` prints as `null`, not `unit value`. In JSON it is `null`.
+/// * `Float` is formatted by `zmij` rather than `{}`.
+///
+/// The second is the one that matters here. serde's impl prints an `f64`
+/// with `{}`, which instantiates `core::fmt`'s shortest-round-trip float
+/// formatter — `float_to_decimal_common_shortest` and `_exact` plus
+/// grisu's `CACHED_POW10`, 11 848 bytes on `thumbv7em-none-eabihf`,
+/// reached only through an error message on a chip with no
+/// double-precision FPU. `zmij` is already a dependency, formats into a
+/// stack buffer, and produces the same digits, so the text is unchanged
+/// and the cost is a tenth of it. See `docs/SIZE.md`.
+///
+/// Every arm is spelled out rather than delegating the rest to serde:
+/// calling `Display for Unexpected` at all links the whole function,
+/// float arm included. `serde_json` delegates and relies on the
+/// optimiser proving the float arm dead; being explicit does not need
+/// that to work. The match is exhaustive on purpose, so a new serde
+/// variant is a compile error rather than a silently worse message.
+#[cfg(feature = "serde")]
+pub(crate) struct Unexpected<'a>(pub(crate) serde::de::Unexpected<'a>);
+
+#[cfg(feature = "serde")]
+impl fmt::Display for Unexpected<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use serde::de::Unexpected as U;
+        match self.0 {
+            U::Bool(b) => write!(f, "boolean `{b}`"),
+            U::Unsigned(i) => write!(f, "integer `{i}`"),
+            U::Signed(i) => write!(f, "integer `{i}`"),
+            U::Float(v) => write!(f, "floating point `{}`", zmij::Buffer::new().format(v)),
+            U::Char(c) => write!(f, "character `{c}`"),
+            U::Str(s) => write!(f, "string {s:?}"),
+            U::Bytes(_) => f.write_str("byte array"),
+            U::Unit => f.write_str("null"),
+            U::Option => f.write_str("Option value"),
+            U::NewtypeStruct => f.write_str("newtype struct"),
+            U::Seq => f.write_str("sequence"),
+            U::Map => f.write_str("map"),
+            U::Enum => f.write_str("enum"),
+            U::UnitVariant => f.write_str("unit variant"),
+            U::NewtypeVariant => f.write_str("newtype variant"),
+            U::TupleVariant => f.write_str("tuple variant"),
+            U::StructVariant => f.write_str("struct variant"),
+            U::Other(other) => f.write_str(other),
+        }
+    }
+}

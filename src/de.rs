@@ -25,7 +25,7 @@
 //! (see [`crate::scalar`]); [`Deserializer::from_faithful`] exists but is
 //! marked accordingly.
 
-use crate::errmsg::Msg;
+use crate::errmsg::{Msg, Unexpected};
 use crate::pool::Pool;
 use crate::query::{Doc, Value};
 use crate::tag::Type;
@@ -85,6 +85,26 @@ impl de::Error for Error {
             msg: Msg::custom(msg),
             offset: None,
         }
+    }
+
+    // serde's default `invalid_type`/`invalid_value` format `unexp` with
+    // `Display`, and the `Float` arm of that impl links `core::fmt`'s
+    // float formatter — 8.7 KB, for an error message. See
+    // `crate::errmsg::Unexpected`.
+    #[cold]
+    fn invalid_type(unexp: serde::de::Unexpected<'_>, exp: &dyn serde::de::Expected) -> Self {
+        <Self as serde::de::Error>::custom(format_args!(
+            "invalid type: {}, expected {exp}",
+            Unexpected(unexp)
+        ))
+    }
+
+    #[cold]
+    fn invalid_value(unexp: serde::de::Unexpected<'_>, exp: &dyn serde::de::Expected) -> Self {
+        <Self as serde::de::Error>::custom(format_args!(
+            "invalid value: {}, expected {exp}",
+            Unexpected(unexp)
+        ))
     }
 }
 

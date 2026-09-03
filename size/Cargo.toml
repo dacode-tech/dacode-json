@@ -46,6 +46,16 @@ path = "src/bin/pullbytes.rs"
 required-features = ["pull"]
 
 [[bin]]
+name = "pullint"
+path = "src/bin/pullint.rs"
+required-features = ["pull"]
+
+[[bin]]
+name = "pullint3"
+path = "src/bin/pullint3.rs"
+required-features = ["pull"]
+
+[[bin]]
 name = "write"
 path = "src/bin/write.rs"
 required-features = ["write"]

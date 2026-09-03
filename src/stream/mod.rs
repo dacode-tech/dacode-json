@@ -45,6 +45,8 @@
 use core::fmt;
 
 use crate::errmsg::Msg;
+#[cfg(feature = "serde")]
+use crate::errmsg::Unexpected;
 
 #[cfg(feature = "serde")]
 mod deserializer;
@@ -111,6 +113,26 @@ impl serde::de::Error for Error {
             offset: None,
         }
     }
+
+    // serde's default `invalid_type`/`invalid_value` format `unexp` with
+    // `Display`, and the `Float` arm of that impl links `core::fmt`'s
+    // float formatter — 8.7 KB, for an error message. See
+    // `crate::errmsg::Unexpected`.
+    #[cold]
+    fn invalid_type(unexp: serde::de::Unexpected<'_>, exp: &dyn serde::de::Expected) -> Self {
+        <Self as serde::de::Error>::custom(format_args!(
+            "invalid type: {}, expected {exp}",
+            Unexpected(unexp)
+        ))
+    }
+
+    #[cold]
+    fn invalid_value(unexp: serde::de::Unexpected<'_>, exp: &dyn serde::de::Expected) -> Self {
+        <Self as serde::de::Error>::custom(format_args!(
+            "invalid value: {}, expected {exp}",
+            Unexpected(unexp)
+        ))
+    }
 }
 
 type Result<T> = core::result::Result<T, Error>;
@@ -126,18 +148,17 @@ pub(crate) enum Num {
     F(f64),
 }
 
-/// Validate and convert a number, following RFC 8259 exactly.
-///
-/// Integers that fit go to `i64`/`u64` so no precision is lost; anything
-/// with a fraction or exponent goes through `str::parse`, which is
-/// correctly rounded. `docs/RESULTS.md` records that `serde_json`'s own
-/// float parser is not, by up to 2 ULP.
 /// Validate a number's syntax without converting it.
 ///
 /// Returns `(negative, integer-digit range, is_float)`. Skipped fields use
 /// this alone: checking `1.7976931348623157e308` is a scan, converting it
 /// is a call into the float parser, and a field the target type ignores
 /// should not pay for the second.
+///
+/// [`Integer::from_json`] uses it for the same reason: a caller that only
+/// wants an `i32` should not link a float parser. On a target with no
+/// double-precision FPU that is not a nicety — see `docs/SIZE.md`, where
+/// it is 93% of the binary.
 pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usize, bool)> {
     if s.is_empty() {
         return Err(Error::at(start, "expected a number"));
@@ -217,6 +238,15 @@ pub(crate) fn validate_number(input: &[u8], start: usize, end: usize) -> Result<
     Ok(())
 }
 
+/// Validate and convert a number, following RFC 8259 exactly.
+///
+/// Integers that fit go to `i64`/`u64` so no precision is lost; anything
+/// with a fraction or exponent goes through `str::parse`, which is
+/// correctly rounded. `docs/RESULTS.md` records that `serde_json`'s own
+/// float parser is not, by up to 2 ULP.
+///
+/// Reaching this function is what links `core`'s float parser. See
+/// [`Integer`] for the way not to.
 pub(crate) fn parse_number(input: &[u8], start: usize, end: usize) -> Result<Num> {
     let s = input.get(start..end).unwrap_or(&[]);
     if s.is_empty() {
@@ -280,4 +310,106 @@ pub(crate) fn expect_lit(input: &[u8], start: usize, end: usize, lit: &[u8]) -> 
     } else {
         Err(Error::at(start, "invalid literal"))
     }
+}
+
+// =====================================================================
+// Integers, without a float parser
+// =====================================================================
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// An integer type a JSON number can be read into directly.
+///
+/// # Why this exists
+///
+/// [`parse_number`] answers "what number is this", so it has to be able
+/// to answer `f64`, so reaching it instantiates `core`'s
+/// correctly-rounded float parser. On `thumbv7em-none-eabihf` that is
+/// 22 KB — `POWER_OF_FIVE_128` alone is 10 416 bytes, and there is no
+/// double-precision FPU, so the arithmetic is soft too. A program that
+/// reads integer fields off a sensor was paying all of it.
+///
+/// Implementations here accumulate digits in `Self` and nothing wider, so
+/// a program that only ever asks for an `i32` links no 64-bit arithmetic
+/// and no float code at all. Measured: 24 486 bytes down to 1 852. See
+/// `docs/SIZE.md`.
+///
+/// # Width is a type, not a feature
+///
+/// Ask for the width you want at the call site. It is deliberately not a
+/// Cargo feature: features are additive and global, so a crate anywhere
+/// in the tree turning on a hypothetical `num-i16` would silently narrow
+/// every other crate's integers. `flat` refused the same bargain for the
+/// same reason — see the README.
+///
+/// Sealed: the digit loop is an implementation detail, and the set of
+/// integer types is not open.
+pub trait Integer: Copy + sealed::Sealed {
+    /// Read `digits` as `Self`, or `None` if it does not fit.
+    ///
+    /// `digits` is ASCII `0`–`9`, already validated. `neg` is the sign.
+    #[doc(hidden)]
+    fn from_json(neg: bool, digits: &[u8]) -> Option<Self>;
+}
+
+macro_rules! signed {
+    ($($t:ty),*) => { $(
+        impl sealed::Sealed for $t {}
+        impl Integer for $t {
+            #[inline]
+            fn from_json(neg: bool, digits: &[u8]) -> Option<Self> {
+                let mut v: $t = 0;
+                for &d in digits {
+                    v = v.checked_mul(10)?;
+                    let x = (d - b'0') as $t;
+                    // Accumulate negatives by subtracting rather than
+                    // negating at the end: `-128` is a valid `i8` and
+                    // `-(128i8)` is not representable to negate.
+                    v = if neg { v.checked_sub(x)? } else { v.checked_add(x)? };
+                }
+                Some(v)
+            }
+        }
+    )* }
+}
+
+macro_rules! unsigned {
+    ($($t:ty),*) => { $(
+        impl sealed::Sealed for $t {}
+        impl Integer for $t {
+            #[inline]
+            fn from_json(neg: bool, digits: &[u8]) -> Option<Self> {
+                // `-0` is the only negative an unsigned type can hold.
+                if neg && digits.iter().any(|&d| d != b'0') {
+                    return None;
+                }
+                let mut v: $t = 0;
+                for &d in digits {
+                    v = v.checked_mul(10)?.checked_add((d - b'0') as $t)?;
+                }
+                Some(v)
+            }
+        }
+    )* }
+}
+
+signed!(i8, i16, i32, i64, i128, isize);
+unsigned!(u8, u16, u32, u64, u128, usize);
+
+/// Read `input[start..end]` as an integer of the caller's chosen width.
+///
+/// Rejects anything with a fraction or an exponent — `1.0` and `1e2` are
+/// not integers here, even though their values are. That is the whole
+/// point: deciding otherwise would mean parsing the float, which is the
+/// cost being avoided. [`parse_number`] is the lenient reading.
+pub(crate) fn parse_integer<T: Integer>(input: &[u8], start: usize, end: usize) -> Result<T> {
+    let s = input.get(start..end).unwrap_or(&[]);
+    let (neg, int_start, int_end, is_float) = number_syntax(s, start)?;
+    if is_float {
+        return Err(Error::at(start, "expected an integer, found a float"));
+    }
+    let digits = s.get(int_start..int_end).unwrap_or(&[]);
+    T::from_json(neg, digits).ok_or_else(|| Error::at(start, "integer out of range"))
 }

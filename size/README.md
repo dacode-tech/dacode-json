@@ -14,12 +14,20 @@ size/
   src/bin/floor.rs    the shim alone — the number subtracted from the rest
   src/bin/pull.rs     dacodec::pull, no allocator
   src/bin/pullbytes.rs  the same, stopping before number conversion
+  src/bin/pullint.rs    the same, with as_int::<i32> — one instantiation,
+                        which is all a Cargo feature could ever give
+  src/bin/pullint3.rs   as_int at three widths — what the choice costs
+                        when it is actually used
   src/bin/write.rs    dacodec::write, no allocator
   src/bin/direct.rs   dacodec through serde, with an allocator
   src/bin/serdejson.rs  serde_json, no_std + alloc
   cbase/              the C contenders and their freestanding libc shims
   link.x              a minimal Cortex-M layout, so there is something to
                       link to
+  width/              a second, smaller harness for `tools/width.sh`: what
+                      integer width costs on 8- and 16-bit machines. A
+                      staticlib, because AVR and MSP430 have no linker
+                      here, and tier 3, so it needs nightly + -Z build-std
 ```
 
 ## Nothing here runs

@@ -1,0 +1,28 @@
+[workspace]
+
+[package]
+name = "width"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+dacodec = { path = "../..", default-features = false }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+
+[features]
+w0 = []
+w8 = []
+w16 = []
+w32 = []
+w64 = []
+wi64 = []

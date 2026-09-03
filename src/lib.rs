@@ -112,15 +112,16 @@ mod errmsg;
 
 // --- neither an allocator nor an OS ----------------------------------
 
-/// On-demand extraction: pull named fields, skip the rest wholesale.
-/// Allocates nothing. See the module docs for the validation trade.
+// The one-line summaries that used to live here have moved into the
+// modules' own `//!` docs. An outer `///` on a `pub mod` is concatenated
+// with the module's inner docs but resolved in *this* module's scope, so
+// every `[`Raw::as_str`]`-style link in the merged text broke.
 pub mod pull;
 pub mod scalar;
 pub mod scan;
 pub mod stream;
 pub mod tag;
 pub mod unescape;
-/// Writing JSON into a caller-supplied buffer, with no allocation.
 pub mod write;
 
 // --- an allocator, but no OS -----------------------------------------
@@ -161,8 +162,6 @@ pub mod tiers;
 pub mod api;
 #[cfg(feature = "serde")]
 pub mod de;
-/// A no-index streaming deserializer, for measuring what Stage 1 is
-/// worth. See `docs/RESULTS.md`.
 #[cfg(feature = "serde")]
 pub mod direct;
 #[cfg(feature = "serde")]

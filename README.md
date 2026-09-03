@@ -463,18 +463,38 @@ a fixed buffer and sum a field. `.text` + `.rodata`, floor subtracted:
 | | bytes |
 |---|---:|
 | `pull`, locating fields only | **1 742** |
+| `pull` + `as_int::<i32>` | **2 102** |
 | `write` | **5 896** |
-| `pull`, converting numbers | **24 486** |
+| `pull` + `as_i64` | 24 486 |
 | `serde_json` (`no_std` + `alloc`) | 29 964 |
-| `dacodec` typed (`serde` + `alloc`) | 50 948 |
+| `dacodec` typed (`serde` + `alloc`) | 43 468 |
 | yyjson (C, reader only) | 69 316 |
 | simdjson, sonic-rs | neither compiles for the target |
 
-93% of the third row is `core`'s correctly-rounded float parser, reached
-through `as_i64`; `dacodec`'s own code in it is 2 544 bytes. yyjson is the
-largest thing in the table because `yyjson_read_opts` is a single
-47 KB `always_inline` function. Method, caveats and the full breakdown:
-[`docs/SIZE.md`](docs/SIZE.md). Reproduce with `tools/size.sh`.
+The gap between rows 2 and 4 is `core`'s correctly-rounded float parser —
+22 KB, reached because `as_i64` accepts an integral float and so must be
+able to parse one. `as_int::<T>()` reads the digits into the width you ask
+for and refuses fractions, so it never links any of it:
+
+```rust
+dacodec::pull::select(json, &[b"t", b"h"], |got| {
+    let temp: i16 = got[0].and_then(|v| v.as_int()).unwrap_or(0);
+    let hum:  u8  = got[1].and_then(|v| v.as_int()).unwrap_or(0);
+    Ok(())
+})?;
+```
+
+Width is a type parameter and not a Cargo feature, for the same reason
+`flat`'s layout is: features are additive and global. It costs nothing —
+a generic instantiated once is 2 422 bytes against 2 446 for a
+hand-written non-generic equivalent, and each additional width in one
+program is 394 bytes. Measured on 8-bit AVR and 16-bit MSP430 as well as
+ARM32.
+
+yyjson is the largest thing in the table because `yyjson_read_opts` is a
+single 47 KB `always_inline` function. Method, caveats and the full
+breakdown: [`docs/SIZE.md`](docs/SIZE.md). Reproduce with `tools/size.sh`
+and `tools/width.sh`.
 
 ### A warning about `vela-compat`
 

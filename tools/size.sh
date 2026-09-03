@@ -36,8 +36,13 @@ done
 [ -n "$NM" ] || { echo "need llvm-nm and llvm-size (brew install llvm)" >&2; exit 1; }
 
 CLANG="$(dirname "$NM")/clang"
-LLD="$(ls ~/.rustup/toolchains/*/lib/rustlib/*/bin/rust-lld 2>/dev/null | head -1)"
-CB="$(ls ~/.rustup/toolchains/*/lib/rustlib/$TRIPLE/lib/libcompiler_builtins-*.rlib 2>/dev/null | head -1)"
+# From the *active* toolchain's sysroot, not a glob over ~/.rustup: a
+# second toolchain installed for something else (a `-Z build-std` target,
+# say) would otherwise be picked up, and a minimal-profile one ships a
+# `rust-lld` with no LLVM dylib beside it.
+SYSROOT="$(rustc --print sysroot)"
+LLD="$(ls "$SYSROOT"/lib/rustlib/*/bin/rust-lld 2>/dev/null | head -1)"
+CB="$(ls "$SYSROOT/lib/rustlib/$TRIPLE/lib/"libcompiler_builtins-*.rlib 2>/dev/null | head -1)"
 
 rustup target list --installed | grep -qx "$TRIPLE" || {
     echo "rustup target add $TRIPLE" >&2; exit 1; }
@@ -50,12 +55,12 @@ export CARGO_PROFILE_RELEASE_STRIP=false
 export CARGO_PROFILE_RELEASE_OPT_LEVEL="$OPT"
 
 OUT="size/target/$TRIPLE/release"
-BINS=(pull pullbytes write direct serdejson)
+BINS=(pull pullint pullint3 pullbytes write direct serdejson)
 
 echo "building rust (opt-level = $OPT) ..."
 ( cd size && cargo build --release --quiet --bin floor )
 for b in "${BINS[@]}"; do
-    f="$b"; [ "$b" = pullbytes ] && f=pull
+    f="$b"; case "$b" in pullbytes|pullint|pullint3) f=pull ;; esac
     ( cd size && cargo build --release --quiet --features "$f" --bin "$b" )
 done
 

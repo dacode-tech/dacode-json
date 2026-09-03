@@ -335,3 +335,55 @@ fn float_precision_beats_serde_json_default() {
     );
     println!("serde_json (default) deviated from correctly-rounded on {differ}/20000 literals");
 }
+
+/// Type-mismatch messages must read the same as `serde_json`'s, exactly.
+///
+/// serde's default `Error::invalid_type` formats the offending value with
+/// `Display`, and `Unexpected::Float`'s `Display` prints an `f64` with
+/// `{}` — which links `core::fmt`'s shortest-round-trip float formatter,
+/// 11 848 bytes on `thumbv7em-none-eabihf` for a number in an error
+/// string (`docs/SIZE.md`). `crate::errmsg::Unexpected` renders it with
+/// `zmij` instead, which is already a dependency and formats into a stack
+/// buffer. The text is meant to be unchanged, and this holds it to that.
+#[test]
+fn type_error_messages_match_serde_json() {
+    #[derive(Deserialize, Debug, PartialEq)]
+    struct R {
+        v: u8,
+    }
+
+    // A sanity check that the type is deserializable at all, which also
+    // reads the field so it is not dead.
+    assert_eq!(
+        dacodec::from_str::<R>(r#"{"v":7}"#).expect("valid"),
+        R { v: 7 }
+    );
+
+    // `serde_json` appends " at line N column M"; this crate reports a
+    // byte offset instead, where it has one. Everything before that must
+    // match word for word.
+    for src in [
+        r#"{"v":"x"}"#,
+        r#"{"v":999}"#,
+        r#"{"v":-1}"#,
+        r#"{"v":[1]}"#,
+        r#"{"v":{}}"#,
+        r#"{"v":null}"#,
+        r#"{"v":true}"#,
+        r#"{"w":1}"#,
+        // The float arm, which is the one the size fix touched.
+        r#"{"v":1.5}"#,
+        r#"{"v":-0.0}"#,
+        r#"{"v":1e300}"#,
+        r#"{"v":1.7976931348623157e308}"#,
+    ] {
+        let theirs = serde_json::from_str::<R>(src)
+            .expect_err("must fail")
+            .to_string();
+        let ours = dacodec::from_str::<R>(src)
+            .expect_err("must fail")
+            .to_string();
+        let theirs = theirs.split(" at line ").next().unwrap_or(&theirs);
+        assert_eq!(ours, theirs, "{src}");
+    }
+}

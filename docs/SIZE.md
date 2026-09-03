@@ -1,11 +1,18 @@
-# Code size on 32-bit ARM
+# Code size on small machines
 
 How big is a program that parses JSON, on a target where that question
 has consequences? Measured on `thumbv7em-none-eabihf` — a Cortex-M4F with
 no operating system, no allocator unless the program supplies one, no
-double-precision FPU and no 64-bit integer divide.
+double-precision FPU and no 64-bit integer divide — and, for the integer
+width question, on 16-bit MSP430 and 8-bit AVR.
 
-Reproduce with `tools/size.sh [z|s|3]`.
+Reproduce with `tools/size.sh [z|s|3]` and `tools/width.sh`.
+
+The short version: on a bare-metal target the JSON library is not what
+costs. `dacodec::pull`'s own code is 2 544 bytes; the binary around it
+was 24 KB, and 22 of those were `core`'s float parser, reached through
+an accessor that had to be able to return an `f64`. `Raw::as_int::<T>()`
+is the fix, and it takes the binary to 2 102 bytes.
 
 ---
 
@@ -16,6 +23,9 @@ three seven-field records and sum an integer field. Same input, same
 bare-metal shim, same bump allocator, same linker script, same
 optimisation settings — so the difference between two binaries is the
 JSON library.
+
+The `pull` rows differ only in which accessor reads the field, so the
+difference between *those* is one method call.
 
 ## Method
 
@@ -51,11 +61,13 @@ Bytes of `.text` + `.rodata`, with the floor subtracted.
 
 | | total | Rust runtime | the library |
 |---|---:|---:|---:|
-| `dacodec::pull`, bytes only | **1 742** | 130 | 1 612 |
-| `dacodec::write` | **5 896** | 3 686 | 2 210 |
-| `dacodec::pull`, converting numbers | **24 486** | 19 496 | 4 990 |
+| `pull`, locating fields only | **1 742** | 130 | 1 612 |
+| `pull` + `as_int::<i32>` | **2 102** | 122 | 1 980 |
+| `pull` + `as_int` at three widths | **2 890** | 146 | 2 744 |
+| `write` | **5 896** | 3 686 | 2 210 |
+| `pull` + `as_i64` | **24 486** | 19 496 | 4 990 |
 | `serde_json` (`no_std` + `alloc`) | **29 964** | 13 479 | 16 485 |
-| `dacodec` typed (`serde` + `alloc`) | **50 948** | 38 369 | 12 579 |
+| `dacodec` typed (`serde` + `alloc`) | **43 468** | 28 847 | 14 621 |
 | yyjson (C, reader only) | **69 316** | 6 698 | 62 618 |
 | simdjson | — | — | does not compile |
 | sonic-rs | — | — | does not compile |
@@ -69,11 +81,13 @@ supplies it, so the total is what actually lands in flash.
 
 | | `z` | `s` | `3` |
 |---|---:|---:|---:|
-| `pull`, bytes only | 1 742 | 2 058 | 5 228 |
+| `pull`, locating fields only | 1 742 | 2 058 | 5 228 |
+| `pull` + `as_int::<i32>` | 2 102 | 2 730 | 5 278 |
+| `pull` + `as_int`, three widths | 2 890 | 3 298 | 6 864 |
 | `write` | 5 896 | 4 196 | 4 640 |
-| `pull` | 24 486 | 25 050 | 29 198 |
+| `pull` + `as_i64` | 24 486 | 25 050 | 29 262 |
 | `serde_json` | 29 964 | 32 520 | 59 760 |
-| `dacodec` typed | 50 948 | 53 804 | 82 836 |
+| `dacodec` typed | 43 468 | 46 968 | 81 448 |
 | yyjson | 69 316 | 79 402 | 113 822 |
 
 Ordering is stable across all three. `write` is smaller at `s` than at
@@ -85,13 +99,13 @@ runtime against 1 848.
 
 ## What the numbers say
 
-### 93% of the `pull` binary is `core`'s float parser
+### 93% of a `pull` binary was `core`'s float parser
 
-`dacodec::pull` doing the whole job is 24 486 bytes. The same code
-stopping at `Raw::bytes` — locating the field but not converting it — is
-1 742. Everything in between is reached through `Raw::as_i64`, which goes
-through `parse_number`, which can return an `f64`, which instantiates
-`core`'s `f64::from_str`:
+`dacodec::pull` summing an integer field through `as_i64` is 24 486
+bytes. The same code stopping at `Raw::bytes` — locating the field but
+not converting it — is 1 742. Everything in between is reached because
+`as_i64` goes through `parse_number`, which has to be able to answer
+`f64`, which instantiates `core`'s correctly-rounded float parser:
 
 | | bytes |
 |---|---:|
@@ -101,31 +115,128 @@ through `parse_number`, which can return an `f64`, which instantiates
 | soft-float `__divdf3`, `__muldf3` | 1 696 |
 | **`dacodec::pull` itself** | **2 544** |
 
-That is the price of a correctly-rounded float parser on a chip with no
-double-precision FPU. `docs/RESULTS.md` records that `serde_json`'s float
-parser is *not* correctly rounded, by up to 2 ULP; this is the other side
-of that ledger, and 13 KB of flash is a real thing to weigh against 2 ULP.
+`Raw::as_int::<T>()` is the accessor that does not. It reads the digit
+range `number_syntax` already found, accumulates in `T`, and refuses
+anything with a fraction or an exponent — so it never reaches the float
+parser, and never links it. **24 486 bytes to 2 102.**
 
-An integer-only accessor that never reaches the float path would cut a
-`pull` binary to roughly 3 KB. It does not exist yet — see the end.
+`docs/RESULTS.md` records that `serde_json`'s float parser is *not*
+correctly rounded, by up to 2 ULP. This is the other side of that
+ledger: `dacodec` keeps `core`'s correct one, and 13 KB of flash is a
+real thing to weigh against 2 ULP — so the answer is to let a caller
+that does not need floats not pay for them, rather than to make the
+float parser worse.
 
-### `dacodec`'s typed path is bigger than `serde_json`'s, and it is not the parser
+### An `f32` accessor would not have helped
 
-51 KB against 30 KB. But by attributed library code `dacodec` is the
-*smaller* of the two — 12 579 bytes against 16 485. The 21 KB difference
-is `core`: 32 803 bytes of it against `serde_json`'s 6 607.
+`f32::from_str` and `f64::from_str` share `POWER_OF_FIVE_128` in `core`,
+so parsing as `f32` still links the 10 416-byte table. Measured: a probe
+doing `str::parse::<f32>()` is 19 210 bytes against 24 486 for `f64` —
+it saves the soft-float arithmetic and nothing else. Narrowing the float
+is not the lever; not parsing one is.
 
-Two causes, both avoidable in principle:
+### Width is a type parameter, and that costs nothing
 
-* `serde_json` ships its own float parser and never instantiates
-  `core::dec2flt`, saving the 13 KB above.
-* `dacodec` drags in `core::fmt`'s float *formatter* as well — 4 064 +
-  3 358 bytes for `float_to_decimal_common_shortest` and `_exact`, plus
-  1 296 for grisu's `CACHED_POW10`. Nothing in the crate formats a float
-  deliberately; it arrives through `serde::de::Unexpected::Float`, whose
-  `Display` is reachable from `Error::custom` because `direct` forwards
-  typed scalars to `deserialize_any`. An error message nobody reads costs
-  8.7 KB.
+The obvious way to expose "use a narrower integer on a small machine" is
+a Cargo feature. It would be a mistake, and it is also unnecessary.
+
+Unnecessary, because a generic instantiated once is exactly what a
+feature compiles to. Measured, on ARM32:
+
+| | bytes |
+|---|---:|
+| `as_int::<i32>()`, generic | 2 422 |
+| hand-written non-generic `i32` path — what a feature would emit | 2 446 |
+| `as_int` at three widths in one program | 3 210 |
+
+The generic is 24 bytes *smaller* at one width, which is codegen noise;
+the point is that there is no monomorphisation penalty to pay unless the
+choice is actually used, and then it is 394 bytes per extra width.
+A feature could not offer that choice at all.
+
+A mistake, because Cargo features are additive and global. A crate
+anywhere in the dependency tree turning on `num-i16` would silently
+narrow every other crate's integers — truncating IDs in code that never
+asked. `flat` refused the same bargain for the same reason; see the
+README on why its layout is a type and not a feature.
+
+### What width buys on 8- and 16-bit machines
+
+`tools/width.sh`, on real tier-3 targets via `-Z build-std`. Bytes added
+over a probe that locates the field and converts nothing:
+
+| | `as_int::<i8>` | `<i16>` | `<i32>` | `<i64>` | `as_i64` |
+|---|---:|---:|---:|---:|---:|
+| ARM32 (Cortex-M4F) | +380 | +380 | +372 | +484 | +18 123 |
+| MSP430 (16-bit) | +352 | +370 | +372 | +776 | +28 409 |
+| AVR (8-bit) | +725 | +859 | +853 | +1 139 | +28 044 |
+
+Three things fall out:
+
+* **Not parsing floats is worth 18–28 KB on every target**, and more on
+  the narrow ones — the 16-bit column pays 1.6× the 32-bit one for the
+  same float parser.
+* **Narrowing below the machine word buys nothing.** `i8`, `i16` and
+  `i32` are within noise of each other everywhere, including on AVR,
+  where a machine word is 8 bits.
+* **`i64` is the only width that is genuinely dearer**, and by 112 bytes
+  on ARM32, 404 on MSP430, 286 on AVR. Real, but two orders of magnitude
+  below the float parser. Worth having the choice; not worth a Cargo
+  feature to express it.
+
+The whole crate builds `no_std` for both of these targets, which is the
+other thing this table demonstrates.
+
+8051 is absent because LLVM has no 8051 back end, so `rustc` has no
+target for it. `rustc --print target-list` offers `avr-none` and
+`msp430-none-elf` and nothing narrower.
+
+### An error message nobody reads was costing 11 848 bytes
+
+Nothing in the crate formats a float deliberately. `core::fmt`'s
+shortest-round-trip float formatter was arriving anyway, through
+`serde::de::Unexpected::Float`: serde's default `Error::invalid_type`
+prints the offending value with `Display`, and `direct` forwards typed
+scalars to `deserialize_any`, so a struct field typed `i64` meeting a
+`1.5` reaches it.
+
+Three ways out, measured:
+
+| | bytes | the message |
+|---|---:|---|
+| serde's default `Display` | 50 948 | `floating point \`1.5\`` |
+| drop the value | 39 100 | `floating point number` |
+| **format it with `zmij`** | **43 468** | `floating point \`1.5\`` |
+
+`zmij` is already a non-optional dependency — `write` needs it — it is
+`no_std`, it formats into a stack buffer, and `serde_json` 1.0.151 uses
+it for the same job, so the digits are identical. Keeping the text costs
+4 368 bytes over dropping it, and buys back the claim on the front of the
+README: a drop-in replacement whose errors read the same.
+`tests/serde_de.rs::type_error_messages_match_serde_json` holds twelve
+mismatches to `serde_json`'s exact wording.
+
+That 4 368 bytes lands only on the typed path, which needs an allocator
+anyway. The path that has to fit in flash is `pull`, and it never touches
+any of this.
+
+`crate::errmsg::Unexpected` spells out every arm rather than delegating
+the rest to serde, as `serde_json` does. Delegating works only because
+the optimiser can prove the float arm dead after the wrapper has handled
+it; being explicit does not need that to hold.
+
+### What is left, and why
+
+`dacodec` typed is 43 KB against `serde_json`'s 30 KB. By attributed
+library code `dacodec` is the *smaller* of the two — 14 621 bytes against
+16 485 — so the gap is `core`, and it is the float parser again:
+`serde_json` ships its own and never instantiates `core::dec2flt`.
+
+That one is a deliberate trade, not an oversight.
+`docs/RESULTS.md` records that `serde_json`'s float parser is not
+correctly rounded, by up to 2 ULP. Matching its size would mean matching
+that. The answer taken instead was to let callers who do not need floats
+avoid them entirely, which is what `as_int` is.
 
 ### yyjson is the largest thing here, which was not the prediction
 
@@ -181,18 +292,31 @@ support at all.
   everywhere and change no ordering.
 * **`dacodec::pull` and yyjson do not do the same amount of work.**
   yyjson builds a full random-access DOM; `pull` streams and extracts.
-  The comparable row for yyjson is `dacodec` typed (51 KB against 69 KB),
-  and even that is not exact — yyjson leaves you a document you can query
-  again.
+  The comparable row for yyjson is `dacodec` typed (43 KB against
+  69 KB), and even that is not exact — yyjson leaves you a document you
+  can query again.
 * **Only `.text` and `.rodata`.** `.bss` is dominated by the 64 KB bump
   arena, which is the harness's choice, not any library's.
+* **`tools/width.sh` measures a `staticlib`, not a linked binary.** AVR
+  and MSP430 have no linker here. That is sound for the question it
+  asks — every column is the same crate compiled the same way with one
+  entry point, and only the accessor differs, so the deltas are real. It
+  would not be sound for comparing two different libraries, which is why
+  `tools/size.sh` links.
+* **AVR and MSP430 are tier 3.** They need nightly and `-Z build-std`,
+  and neither is in `tools/check-features.sh`, so nothing stops them
+  breaking silently.
 
 ---
 
-## Follow-up this measurement argues for
+## Follow-ups this measurement argues for
 
-An integer-only number accessor on `pull` — `as_i64` that rejects a
-fraction rather than parsing one — would take a `pull` binary from 24 KB
-to about 3 KB for the very common case of reading integer fields off a
-sensor feed. The measurement above is the argument; the API is not
-written.
+* **`serde_json` avoids `core::dec2flt` by shipping its own float
+  parser.** The 13 KB is the price of a correctly-rounded one. A
+  `pull`-shaped float accessor that reads a fixed-point value without
+  ever building an `f64` would suit the sensor case, which mostly wants
+  two decimal places rather than 17 significant figures.
+* **`direct` forwards typed scalars to `deserialize_any`.** That is why
+  a float can reach a visitor expecting an `i64` at all. Implementing
+  `deserialize_i64` and friends directly would remove a whole class of
+  error path, not just its message.

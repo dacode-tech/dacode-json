@@ -52,7 +52,23 @@
 //!
 //! Nothing here allocates: no index, no pool, no `String`. The only memory
 //! is the input slice and a handful of `usize` on the stack. Recursion
-//! depth is bounded by [`MAX_DEPTH`].
+//! depth is bounded by [`MAX_DEPTH`]. It builds for a target with no
+//! allocator and no OS, and for 8- and 16-bit ones.
+//!
+//! Two accessors exist for the same field because the choice is worth
+//! 22 KB of flash:
+//!
+//! * [`Raw::as_int::<T>`](Raw::as_int) reads digits straight into the
+//!   width you name and refuses fractions. It cannot reach a float
+//!   parser, because it cannot return a float.
+//! * [`Raw::as_i64`] accepts `1.0` as the integer 1, which means it has
+//!   to be able to parse `1.5` first, which links `core`'s
+//!   correctly-rounded float parser — 22 KB on a chip with no
+//!   double-precision FPU.
+//!
+//! Likewise [`Raw::as_borrowed_str`] against [`Raw::as_str`]: the first
+//! hands back a subslice and needs no allocator, the second expands
+//! escapes and needs one. `docs/SIZE.md` has the measurements.
 
 use crate::stream::{expect_lit, parse_number, Error, Num};
 
@@ -118,7 +134,42 @@ impl<'de> Raw<'de> {
         self.kind == Kind::Null
     }
 
+    /// Read an integer of the width you ask for, without linking a float
+    /// parser.
+    ///
+    /// ```
+    /// # fn main() -> Result<(), dacodec::stream::Error> {
+    /// dacodec::pull::select(br#"[{"t":-40,"h":81}]"#, &[b"t", b"h"], |got| {
+    ///     assert_eq!(got[0].and_then(|v| v.as_int::<i16>()), Some(-40));
+    ///     assert_eq!(got[1].and_then(|v| v.as_int::<u8>()), Some(81));
+    ///     Ok(())
+    /// })?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// `None` if the value is not a number, does not fit `T`, or **has a
+    /// fraction or an exponent**: `1.0` and `1e2` are not integers here.
+    /// Deciding otherwise would mean parsing the float, which is the cost
+    /// this exists to avoid — [`as_i64`](Self::as_i64) is the lenient
+    /// reading and accepts them.
+    ///
+    /// Digits accumulate in `T` and nothing wider, so asking for an
+    /// `i32` links no 64-bit arithmetic either. On
+    /// `thumbv7em-none-eabihf` this is the difference between a 24 KB
+    /// binary and a 2 KB one; see [`crate::stream::Integer`] and
+    /// `docs/SIZE.md`.
+    #[must_use]
+    pub fn as_int<T: crate::stream::Integer>(&self) -> Option<T> {
+        if self.kind != Kind::Number {
+            return None;
+        }
+        crate::stream::parse_integer(self.bytes, 0, self.bytes.len()).ok()
+    }
+
     /// Convert to `i64`, validating the number.
+    ///
+    /// Accepts an integral float, and therefore links `core`'s float
+    /// parser. [`as_int`](Self::as_int) is the one that does not.
     #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self.num()? {
@@ -709,5 +760,135 @@ mod tests {
             Ok(())
         })
         .expect("structure is fine");
+    }
+    /// `as_int` must agree with `as_i64` wherever both answer, and must
+    /// refuse exactly the cases that would need a float parser.
+    #[test]
+    fn as_int_is_the_strict_reading() {
+        let cases: &[(&str, Option<i64>, Option<i64>)] = &[
+            // json      as_int::<i64>  as_i64
+            ("0", Some(0), Some(0)),
+            ("-0", Some(0), Some(0)),
+            ("7", Some(7), Some(7)),
+            ("-40", Some(-40), Some(-40)),
+            ("9223372036854775807", Some(i64::MAX), Some(i64::MAX)),
+            ("-9223372036854775808", Some(i64::MIN), Some(i64::MIN)),
+            // Out of range for i64 either way.
+            ("9223372036854775808", None, None),
+            // Integral floats: `as_i64` accepts, `as_int` refuses,
+            // because accepting would mean parsing the float.
+            ("1.0", None, Some(1)),
+            ("1e2", None, Some(100)),
+            ("-2.0", None, Some(-2)),
+            // Not integers by any reading.
+            ("1.5", None, None),
+        ];
+        for &(src, want_int, want_i64) in cases {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                let v = got[0].expect("field present");
+                assert_eq!(v.as_int::<i64>(), want_int, "as_int({src})");
+                assert_eq!(v.as_i64(), want_i64, "as_i64({src})");
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        }
+    }
+
+    /// Every width is exact at its own boundaries, and one past them is
+    /// `None` rather than a wrap.
+    #[test]
+    fn as_int_respects_the_width_asked_for() {
+        macro_rules! check {
+            ($t:ty, $min:expr, $max:expr) => {{
+                for (src, want) in [
+                    (alloc::format!("{}", $min), Some($min)),
+                    (alloc::format!("{}", $max), Some($max)),
+                ] {
+                    let doc = alloc::format!("[{{\"v\":{src}}}]");
+                    select(doc.as_bytes(), &[b"v"], |got| {
+                        assert_eq!(got[0].and_then(|v| v.as_int::<$t>()), want, "{src}");
+                        Ok(())
+                    })
+                    .expect("valid");
+                }
+                // One past each end must not wrap.
+                for src in [
+                    alloc::format!("{}", i128::from($min) - 1),
+                    alloc::format!("{}", i128::from($max) + 1),
+                ] {
+                    let doc = alloc::format!("[{{\"v\":{src}}}]");
+                    select(doc.as_bytes(), &[b"v"], |got| {
+                        assert_eq!(got[0].and_then(|v| v.as_int::<$t>()), None, "{src}");
+                        Ok(())
+                    })
+                    .expect("valid");
+                }
+            }};
+        }
+        check!(i8, i8::MIN, i8::MAX);
+        check!(u8, u8::MIN, u8::MAX);
+        check!(i16, i16::MIN, i16::MAX);
+        check!(u16, u16::MIN, u16::MAX);
+        check!(i32, i32::MIN, i32::MAX);
+        check!(u32, u32::MIN, u32::MAX);
+    }
+
+    /// An unsigned width takes `-0` and refuses every other negative,
+    /// rather than wrapping it.
+    #[test]
+    fn negatives_do_not_wrap_into_unsigned() {
+        for (src, want) in [("-0", Some(0u32)), ("-1", None), ("-4294967295", None)] {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                assert_eq!(got[0].and_then(|v| v.as_int::<u32>()), want, "{src}");
+                Ok(())
+            })
+            .expect("valid");
+        }
+    }
+
+    /// Malformed numbers are still rejected: `as_int` validates syntax
+    /// even though it never converts a float.
+    #[test]
+    fn as_int_still_validates_syntax() {
+        for src in ["01", "1.", "1e", "-", "+1", "0x10", "--1", "1e+", "0."] {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            let mut checked = false;
+            let _ = select(doc.as_bytes(), &[b"v"], |got| {
+                if let Some(v) = got[0] {
+                    assert_eq!(v.as_int::<i64>(), None, "as_int({src})");
+                    assert_eq!(v.as_i64(), None, "as_i64({src})");
+                    checked = true;
+                }
+                Ok(())
+            });
+            assert!(checked, "{src}: field was never offered");
+        }
+    }
+
+    /// Where `pull`'s laxness shows, and that `as_int` does not widen it.
+    ///
+    /// `pull` ends a number at the next delimiter and does not police
+    /// what follows, so `{"v":1 2}` is accepted here and rejected by
+    /// [`crate::from_slice`] — the trade the module docs describe. What
+    /// matters for `as_int` is that it reads the extent it was given and
+    /// does not invent a value from the rest.
+    #[test]
+    fn trailing_garbage_is_pulls_gap_not_a_wrong_number() {
+        for (src, want) in [("1 2", 1i64), ("1,", 1), ("1 true", 1)] {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                let v = got[0].expect("field present");
+                assert_eq!(v.as_int::<i64>(), Some(want), "{src}");
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+            // The strict path is the one that rejects it.
+            assert!(
+                crate::validate(doc.as_bytes()).is_err(),
+                "{src}: validate should reject"
+            );
+        }
     }
 }

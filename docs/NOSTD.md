@@ -28,6 +28,7 @@ dacodec = { version = "0.1", default-features = false }
 | `scalar::skip_ws` | whitespace skipping |
 | `tag` | the node type tags |
 | `unescape::borrow_str` | a string as a subslice, when it can be one |
+| `stream::Integer` | the widths `pull::Raw::as_int` reads into |
 
 Nothing here allocates, on any path, including the error path —
 `tests/error_alloc.rs` holds it to a literal zero across 19 malformed
@@ -103,6 +104,22 @@ exist yet. Note also that `StructuralIndex::write_bits` relies on
 a fixed-buffer sink would have to honour the same `SPILL = 32` headroom
 contract.
 
+### Reading a number should not require being able to read a float
+
+`Raw::as_i64` accepts an integral float, so it goes through
+`parse_number`, so it instantiates `core`'s `f64::from_str`, so a program
+that only reads integers links 22 KB of float parser and soft-float
+arithmetic. `Raw::as_int::<T>()` reads the digit range that
+`number_syntax` already found, accumulates in `T`, and refuses anything
+with a fraction or an exponent.
+
+The width is a type parameter rather than a Cargo feature, and
+`docs/SIZE.md` has the measurement for why: a generic instantiated once
+compiles to the same thing a feature would, and a feature could not
+express two widths in one program at all — while being additive and
+global, so a crate anywhere in the tree could silently narrow another
+crate's integers.
+
 ### `f64::fract` and `f64::abs` are in `std`, not `core`
 
 `pull::Raw::as_i64` accepts an integral float. It used to say
@@ -110,6 +127,16 @@ contract.
 `i64` and compares, which says the same thing without the float methods.
 The bound is still needed: `i64::MAX as f64` rounds *up* to 2^63, so a
 value of exactly 2^63 would saturate and appear to round-trip.
+
+### An error message was linking a float formatter
+
+serde's default `Error::invalid_type` prints the offending value with
+`Display`, and `Unexpected::Float`'s `Display` uses `{}` on an `f64`,
+which instantiates `core::fmt`'s shortest-round-trip float formatter —
+11 848 bytes on a chip with no double-precision FPU. `errmsg::Unexpected`
+formats it with `zmij` instead, which is already a dependency and uses a
+stack buffer. `serde_json` does the same thing, so the text is unchanged;
+`tests/serde_de.rs` holds it to `serde_json`'s exact wording.
 
 ### `HashMap` where there is one
 
