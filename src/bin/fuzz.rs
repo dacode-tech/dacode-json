@@ -9,11 +9,25 @@
 //!
 //! Usage: `fuzz [seed] [iterations]`
 
+// Panic-freedom is a property of what ships, and these binaries ship in
+// the repository even if not in the crate. `docs/UNWRAP_FREE.md` §5
+// recommends denying these for library code and leaving tests alone; a
+// `main` is neither, and `fn main() -> Result<_, _>` makes it free.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    clippy::unwrap_in_result,
+    clippy::exit
+)]
+
 use std::hint::black_box;
 use dacodec::corpus::Rng;
 use dacodec::fuzz::{check, mutate, seed_corpus, Finding};
 
-fn main() {
+fn main() -> Result<(), Findings> {
     let args: Vec<String> = std::env::args().collect();
     let seed: u64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
     let iters: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100_000);
@@ -65,16 +79,33 @@ fn main() {
 
     if findings.is_empty() {
         println!("no findings");
-        return;
+        return Ok(());
     }
+    Err(Findings(findings))
+}
 
-    println!("{} finding(s):", findings.len());
-    for (case_seed, input, fs) in &findings {
-        println!("\n  case_seed={case_seed}");
-        println!("  input: {:?}", String::from_utf8_lossy(input.get(..200).unwrap_or(input)));
-        for f in fs {
-            println!("    {f:?}");
+/// What the fuzzer found, reported by returning it from `main`.
+///
+/// A fuzzer that found something must exit non-zero, and this is how to
+/// do that without `process::exit` or a panic: `main` returning `Err`
+/// prints `Error: {Debug}` and exits 1. `Debug` is therefore the report,
+/// which is why it is hand-written rather than derived.
+struct Findings(Vec<(u64, Vec<u8>, Vec<Finding>)>);
+
+impl std::fmt::Debug for Findings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{} finding(s):", self.0.len())?;
+        for (case_seed, input, fs) in &self.0 {
+            writeln!(f, "\n  case_seed={case_seed}")?;
+            writeln!(
+                f,
+                "  input: {:?}",
+                String::from_utf8_lossy(input.get(..200).unwrap_or(input))
+            )?;
+            for finding in fs {
+                writeln!(f, "    {finding:?}")?;
+            }
         }
+        Ok(())
     }
-    std::process::exit(1);
 }

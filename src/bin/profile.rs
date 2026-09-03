@@ -5,6 +5,20 @@
 //! Run under a profiler with, for example:
 //!   samply record -- ./target/release/profile vela_de 200
 
+// Panic-freedom is a property of what ships, and these binaries ship in
+// the repository even if not in the crate. `docs/UNWRAP_FREE.md` §5
+// recommends denying these for library code and leaving tests alone; a
+// `main` is neither, and `fn main() -> Result<_, _>` makes it free.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    clippy::unwrap_in_result,
+    clippy::exit
+)]
+
 use std::env;
 use std::hint::black_box;
 use dacodec::strict::StrictParser;
@@ -21,7 +35,27 @@ struct Record {
     tags: Vec<String>,
 }
 
-fn main() {
+fn main() -> Result<(), Fatal> {
+    run().map_err(|e| Fatal(e.to_string()))
+}
+
+/// A fatal error, rendered as a message rather than as a literal.
+///
+/// `main` returning `Err(e)` prints `Error: {e:?}` and exits 1 — no
+/// panic, no `process::exit`. But the `Debug` of a `String` inside a
+/// `Box<dyn Error>` prints with quotes and escaped inner quotes, which
+/// looks like a bug report rather than a diagnostic. Delegating `Debug`
+/// to `Display` fixes that, and keeping it at the `main` boundary lets
+/// everything below use `?` on whatever error it has.
+struct Fatal(String);
+
+impl std::fmt::Debug for Fatal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let workload = args.get(1).map(String::as_str).unwrap_or("list");
     let iters: usize = args
@@ -48,7 +82,7 @@ fn main() {
 
     if workload == "list" {
         println!("workloads: {}", workloads.join(", "));
-        return;
+        return Ok(());
     }
 
     eprintln!("running {workload} x{iters} over {} bytes", bytes.len());
@@ -85,14 +119,14 @@ fn main() {
         "vela_strict" => {
             let mut p = StrictParser::with_capacity(bytes.len());
             for _ in 0..iters {
-                black_box(p.parse(bytes).expect("valid").pool().len());
+                black_box(p.parse(bytes)?.pool().len());
             }
         }
         "vela_de" => {
             let mut p = StrictParser::with_capacity(bytes.len());
             for _ in 0..iters {
-                let doc = p.parse(bytes).expect("valid");
-                let v: Vec<Record> = de::from_doc(doc).expect("de");
+                let doc = p.parse(bytes)?;
+                let v: Vec<Record> = de::from_doc(doc)?;
                 black_box(v.len());
             }
         }
@@ -100,64 +134,63 @@ fn main() {
             let mut idx = dacodec::stream::Index::default();
             idx.reserve_for(bytes.len());
             for _ in 0..iters {
-                let v: Vec<Record> =
-                    dacodec::stream::from_slice_with(&mut idx, bytes).expect("de");
+                let v: Vec<Record> = dacodec::stream::from_slice_with(&mut idx, bytes)?;
                 black_box(v.len());
             }
         }
         "vela_ser" => {
-            let data: Vec<Record> = serde_json::from_slice(bytes).expect("parse");
+            let data: Vec<Record> = serde_json::from_slice(bytes)?;
             let mut out = Vec::with_capacity(bytes.len() + 64);
             for _ in 0..iters {
                 out.clear();
-                ser::to_writer(&mut out, &data).expect("ser");
+                ser::to_writer(&mut out, &data)?;
                 black_box(out.len());
             }
         }
         "serde_json_value" => {
             for _ in 0..iters {
-                let v: serde_json::Value = serde_json::from_slice(bytes).expect("parse");
+                let v: serde_json::Value = serde_json::from_slice(bytes)?;
                 black_box(v);
             }
         }
         "serde_json_de" => {
             for _ in 0..iters {
-                let v: Vec<Record> = serde_json::from_slice(bytes).expect("de");
+                let v: Vec<Record> = serde_json::from_slice(bytes)?;
                 black_box(v.len());
             }
         }
         "serde_json_ser" => {
-            let data: Vec<Record> = serde_json::from_slice(bytes).expect("parse");
+            let data: Vec<Record> = serde_json::from_slice(bytes)?;
             for _ in 0..iters {
-                black_box(serde_json::to_vec(&data).expect("ser").len());
+                black_box(serde_json::to_vec(&data)?.len());
             }
         }
         "simd_json_tape" => {
             let mut buffers = simd_json::Buffers::new(bytes.len());
             for _ in 0..iters {
                 let mut buf = bytes.to_vec();
-                let t = simd_json::to_tape_with_buffers(&mut buf, &mut buffers).expect("tape");
+                let t = simd_json::to_tape_with_buffers(&mut buf, &mut buffers)?;
                 black_box(t.as_value().is_object());
             }
         }
         "sonic_de" => {
             for _ in 0..iters {
-                let v: Vec<Record> = sonic_rs::from_slice(bytes).expect("de");
+                let v: Vec<Record> = sonic_rs::from_slice(bytes)?;
                 black_box(v.len());
             }
         }
         "flat_encode" => {
             let mut p = StrictParser::with_capacity(bytes.len());
             for _ in 0..iters {
-                let doc = p.parse(bytes).expect("valid");
-                black_box(flat::encode(doc).expect("encode").len());
+                let doc = p.parse(bytes)?;
+                black_box(flat::encode(doc)?.len());
             }
         }
         "flat_read" => {
             let mut p = StrictParser::with_capacity(bytes.len());
-            let buf = flat::encode(p.parse(bytes).expect("valid")).expect("encode");
+            let buf = flat::encode(p.parse(bytes)?)?;
             for _ in 0..iters * 20 {
-                let v = flat::View::new(&buf).expect("view");
+                let v = flat::View::new(&buf)?;
                 let sum: i64 = v
                     .root()
                     .elements()
@@ -197,8 +230,12 @@ fn main() {
         }
 
         other => {
-            eprintln!("unknown workload {other:?}; try: {}", workloads.join(", "));
-            std::process::exit(2);
+            // Returning the error rather than `process::exit` keeps the
+            // exit path out of the lint's way and still exits non-zero.
+            return Err(
+                format!("unknown workload {other:?}; try: {}", workloads.join(", ")).into(),
+            );
         }
     }
+    Ok(())
 }

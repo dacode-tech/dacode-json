@@ -31,19 +31,34 @@ top of `src/lib.rs`.
 has zero panicking constructs in library code. This is enforced, not claimed:
 
 ```rust
-// src/lib.rs
+// src/lib.rs, and the same block in each of src/bin/*.rs
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
+    clippy::unreachable,
     clippy::indexing_slicing,
     clippy::unwrap_in_result,
     clippy::exit
 )]
 ```
 
-`cargo clippy --lib` passes. `clippy::indexing_slicing` is the one that
-actually bites: it bans `slice[i]`, which is where parsers normally panic.
+`cargo clippy --all-features --all-targets` passes. `indexing_slicing` is
+the one that actually bites: it bans `slice[i]`, which is where parsers
+normally panic. `unreachable` is the one that bites *later* — it is where
+an "obviously impossible" branch goes to assert a coupling between two
+functions instead of proving it, and there was exactly one, in
+`memprofile`.
+
+The binaries were the gap. They are not library code and not tests, so
+nothing linted them, and they had 38 `.expect()` calls between them.
+Each `main` now returns `Result`, which costs nothing: `main` returning
+`Err(e)` prints `Error: {e:?}` and exits 1 without unwinding. Two of
+them wrap the error in a newtype whose `Debug` delegates to `Display`,
+because the `Debug` of a `String` in a `Box<dyn Error>` prints with
+quotes and reads like a bug report. `src/bin/fuzz.rs` goes further and
+makes its *findings* the error type, so a fuzzer that found something
+exits non-zero by returning the report.
 
 The property is also tested, not just linted:
 

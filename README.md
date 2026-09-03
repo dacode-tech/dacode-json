@@ -280,6 +280,35 @@ cargo run --release --example zero_copy # the flat format, and why
 A README example that does not compile is worse than none, so they are all
 real programs rather than fragments.
 
+## Threads
+
+Every public type is `Send + Sync`; owned ones are also `'static`. There are
+no exceptions, and it is not a coincidence: the crate has no interior
+mutability anywhere — no `Cell`, no `RefCell`, no `Rc`, no `Mutex`, no
+`static mut`, no `unsafe impl` — and which SIMD kernel it uses is decided by
+`target_feature` at compile time rather than by a cached runtime probe, so
+there is not even a `Once` to reason about. Nothing in the crate needs a
+lock, because nothing in it is shared mutable state.
+
+So a `Doc` or a `flat::View` goes straight into `rayon`, an error crosses a
+channel, and a `Parser` lives in a thread pool slot. `tests/thread_safety.rs`
+asserts the auto traits at compile time — a type losing `Send` is a build
+failure, not a silent semver break — and then hammers every entry point from
+eight threads in case the types are lying. It is clean under
+ThreadSanitizer:
+
+```bash
+rustup toolchain install nightly --component rust-src
+RUSTFLAGS=-Zsanitizer=thread cargo +nightly test -Z build-std \
+    --target aarch64-apple-darwin --test thread_safety
+```
+
+Note that types holding an exclusive borrow are `Sync` too: `write::Writer`
+holds a `&mut [u8]`, and `&mut T` is `Sync` whenever `T` is, because sharing
+a `&&mut T` only permits reads. The first draft of that test asserted the
+opposite and failed to compile, which is why it is a test and not a
+paragraph.
+
 ## Running the tests
 
 ```bash
@@ -294,7 +323,11 @@ tools/check-features.sh          # every feature combination + two cross targets
 ```
 
 Clippy is clean at every feature combination, not just the default one, and
-`cargo doc` raises no warnings — there are no broken intra-doc links.
+`cargo doc` raises no warnings — there are no broken intra-doc links. The
+panic-freedom lints now cover `src/bin/` as well as the library: every
+`main` returns `Result`, so there is no `unwrap`, `expect`, `panic!`,
+`unreachable!` or `process::exit` anywhere outside tests. See
+[`docs/UNWRAP_FREE.md`](docs/UNWRAP_FREE.md).
 
 What is covered:
 

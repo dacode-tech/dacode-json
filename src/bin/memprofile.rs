@@ -35,6 +35,20 @@
 //! Usage: `memprofile <impl> [corpus] [target-bytes]`
 //!        `memprofile selftest`   — calibrate the instrument
 
+// Panic-freedom is a property of what ships, and these binaries ship in
+// the repository even if not in the crate. `docs/UNWRAP_FREE.md` §5
+// recommends denying these for library code and leaving tests alone; a
+// `main` is neither, and `fn main() -> Result<_, _>` makes it free.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unreachable,
+    clippy::indexing_slicing,
+    clippy::unwrap_in_result,
+    clippy::exit
+)]
+
 use std::env;
 use std::hint::black_box;
 use dacodec::memstat::{human, Snapshot};
@@ -122,7 +136,27 @@ const IMPLS: &[&str] = &[
     "simdjson_dom",
 ];
 
-fn main() {
+fn main() -> Result<(), Fatal> {
+    run_cli().map_err(|e| Fatal(e.to_string()))
+}
+
+/// A fatal error, rendered as a message rather than as a literal.
+///
+/// `main` returning `Err(e)` prints `Error: {e:?}` and exits 1 — no
+/// panic, no `process::exit`. But the `Debug` of a `String` inside a
+/// `Box<dyn Error>` prints with quotes and escaped inner quotes, which
+/// looks like a bug report rather than a diagnostic. Delegating `Debug`
+/// to `Display` fixes that, and keeping it at the `main` boundary lets
+/// everything below use `?` on whatever error it has.
+struct Fatal(String);
+
+impl std::fmt::Debug for Fatal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let which = args.get(1).map(String::as_str).unwrap_or("list");
     let corpus_name = args.get(2).map(String::as_str).unwrap_or("records");
@@ -133,11 +167,10 @@ fn main() {
 
     if which == "list" {
         println!("{}", IMPLS.join(" "));
-        return;
+        return Ok(());
     }
     if which == "selftest" {
-        selftest();
-        return;
+        return selftest();
     }
 
     let json = match corpus_name {
@@ -146,10 +179,7 @@ fn main() {
         "strings" => corpus::sized(target, 0x2C0, corpus::strings),
         "geo_int" => corpus::sized(target, 0x2C0, corpus::geo_int),
         "geo_float" => corpus::sized(target, 0x2C0, corpus::geo_float),
-        other => {
-            eprintln!("unknown corpus {other:?}");
-            std::process::exit(2);
-        }
+        other => return Err(format!("unknown corpus {other:?}").into()),
     };
     let src = json.as_bytes();
 
@@ -162,7 +192,7 @@ fn main() {
     // I already have", so building it must not be charged to them.
     let prepared: Option<Vec<u8>> = match which {
         "read_jsonflat_typed" => {
-            let recs: Vec<Record> = serde_json::from_slice(src).expect("valid");
+            let recs: Vec<Record> = serde_json::from_slice(src)?;
             let mut w = flat::typed::TypedWriter::<FlatRecord>::new();
             for r in &recs {
                 w.record()
@@ -178,8 +208,8 @@ fn main() {
         }
         "read_jsonflat_dyn" => {
             let mut p = StrictParser::new();
-            let doc = p.parse(src).expect("valid");
-            Some(flat::encode(doc).expect("encode"))
+            let doc = p.parse(src)?;
+            Some(flat::encode(doc)?)
         }
         // To "read" JSON text you must parse it; that is the point.
         "read_serde_json" => Some(src.to_vec()),
@@ -198,7 +228,7 @@ fn main() {
     let a = Snapshot::now();
     let (keep, note) = match (&prepared, which) {
         (Some(buf), "read_jsonflat_typed") => {
-            let v = flat::typed::TypedView::<FlatRecord>::new(buf).expect("view");
+            let v = flat::typed::TypedView::<FlatRecord>::new(buf)?;
             let mut acc = 0usize;
             for i in 0..v.len() {
                 acc += v.id(i).unwrap_or(0) as usize;
@@ -209,7 +239,7 @@ fn main() {
             (Box::new(()) as Keep, format!("read acc={acc}"))
         }
         (Some(buf), "read_jsonflat_dyn") => {
-            let v = flat::View::new(buf).expect("view");
+            let v = flat::View::new(buf)?;
             let mut acc = 0usize;
             for rec in v.root().elements() {
                 for (k, val) in rec.entries() {
@@ -221,7 +251,7 @@ fn main() {
         }
         (Some(buf), "read_serde_json") => {
             // The honest comparison: to "read" JSON text you must parse it.
-            let v: serde_json::Value = serde_json::from_slice(buf).expect("valid");
+            let v: serde_json::Value = serde_json::from_slice(buf)?;
             let mut acc = 0usize;
             for rec in v.as_array().map(Vec::as_slice).unwrap_or_default() {
                 for (k, val) in rec.as_object().into_iter().flatten() {
@@ -231,7 +261,7 @@ fn main() {
             }
             (Box::new(v) as Keep, format!("read acc={acc}"))
         }
-        _ => run(which, src),
+        _ => run(which, src)?,
     };
     let b = Snapshot::now();
     drop(keep);
@@ -268,6 +298,7 @@ fn main() {
             human(churn.rust_bytes as i64),
         );
     }
+    Ok(())
 }
 
 /// Calibrate the instrument against known allocation sizes.
@@ -277,7 +308,7 @@ fn main() {
 /// large or C-side allocations. This allocates exactly 8 MiB from Rust and
 /// exactly 8 MiB from C and reports what each metric sees, both while alive
 /// and after the free.
-fn selftest() {
+fn selftest() -> Result<(), Box<dyn std::error::Error>> {
     const N: usize = 8 << 20;
 
     println!("calibration, expecting {} per case\n", human(N as i64));
@@ -321,7 +352,7 @@ fn selftest() {
     #[cfg(feature = "cbench")]
     {
         let a = Snapshot::now();
-        let pool = dacodec::cbench::YyPool::new(N).expect("pool");
+        let pool = dacodec::cbench::YyPool::new(N).ok_or("yyjson pool allocation failed")?;
         let b = Snapshot::now();
         drop(pool);
         let c = Snapshot::now();
@@ -335,13 +366,17 @@ fn selftest() {
         println!("\nnote: a C malloc is invisible to the Rust GlobalAlloc counter by");
         println!("      construction, which is why `retained` uses mstats()/mallinfo2().");
     }
+    Ok(())
 }
 
 /// A type-erased box holding whatever must stay alive for the measurement.
 type Keep = Box<dyn std::any::Any>;
 
-fn run(which: &str, src: &[u8]) -> (Keep, String) {
-    match which {
+fn run(which: &str, src: &[u8]) -> Result<(Keep, String), Box<dyn std::error::Error>> {
+    // `Ok(match ...)` rather than `Ok(...)` on thirty arms: the arms all
+    // produce the same tuple, and `?` inside them still returns from the
+    // function.
+    Ok(match which {
         // Corpus already generated and touched by the caller; do nothing.
         "baseline" => (Box::new(()), "floor".to_string()),
 
@@ -380,15 +415,15 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         // --- zero-copy buffers: the buffer IS the parsed form ---
         "jsonflat_dyn" => {
             let mut p = StrictParser::new();
-            let doc = p.parse(src).expect("valid");
-            let buf = flat::encode(doc).expect("encode");
+            let doc = p.parse(src)?;
+            let buf = flat::encode(doc)?;
             let n = buf.len();
             // Drop the parser so only the buffer is retained.
             drop(p);
             (Box::new(buf), format!("buf_bytes={n}"))
         }
         "jsonflat_typed" => {
-            let recs: Vec<Record> = serde_json::from_slice(src).expect("valid");
+            let recs: Vec<Record> = serde_json::from_slice(src)?;
             let mut w = flat::typed::TypedWriter::<FlatRecord>::new();
             for r in &recs {
                 w.record()
@@ -412,49 +447,52 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         // which is the question a zero-copy format exists to answer. The
         // buffer is built before the snapshot and handed in, so only the
         // reader's own allocation shows up.
+        // `unreachable!()` would be the obvious spelling, and it would
+        // be asserting a coupling with `run_cli` rather than proving
+        // one. If the two ever disagree this says so instead of aborting.
         "read_jsonflat_typed" | "read_jsonflat_dyn" | "read_serde_json" => {
-            unreachable!("handled in main before the measurement window")
+            return Err(format!("{which} must be prepared before the measurement window").into())
         }
 
         // --- Rust reference libraries ---
         "serde_json_value" => {
-            let v: serde_json::Value = serde_json::from_slice(src).expect("valid");
+            let v: serde_json::Value = serde_json::from_slice(src)?;
             let n = v.as_array().map_or(0, Vec::len);
             (Box::new(v), format!("elems={n}"))
         }
         "direct_structs" => {
-            let v: Vec<Record> = dacodec::direct::from_slice(src).expect("valid");
+            let v: Vec<Record> = dacodec::direct::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "direct_structs_boxed" => {
-            let v: Vec<RecordBoxed> = dacodec::direct::from_slice(src).expect("valid");
+            let v: Vec<RecordBoxed> = dacodec::direct::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "stream_structs" => {
-            let v: Vec<Record> = dacodec::stream::from_slice(src).expect("valid");
+            let v: Vec<Record> = dacodec::stream::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "stream_structs_boxed" => {
-            let v: Vec<RecordBoxed> = dacodec::stream::from_slice(src).expect("valid");
+            let v: Vec<RecordBoxed> = dacodec::stream::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "serde_json_structs_boxed" => {
-            let v: Vec<RecordBoxed> = serde_json::from_slice(src).expect("valid");
+            let v: Vec<RecordBoxed> = serde_json::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "serde_json_structs" => {
-            let v: Vec<Record> = serde_json::from_slice(src).expect("valid");
+            let v: Vec<Record> = serde_json::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "simd_json_owned" => {
             let mut buf = src.to_vec();
-            let owned = simd_json::to_owned_value(&mut buf).expect("valid");
+            let owned = simd_json::to_owned_value(&mut buf)?;
             (Box::new((buf, owned)), "to_owned_value".to_string())
         }
         // simd-json's actual tape, which is what tier 2/3 should be
@@ -462,20 +500,20 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         "simd_json_tape" => {
             let mut buf = src.to_vec();
             let n = {
-                let tape = simd_json::to_tape(&mut buf).expect("valid");
+                let tape = simd_json::to_tape(&mut buf)?;
                 usize::from(tape.as_value().is_object())
             };
             (Box::new(buf), format!("tape root_is_object={n}"))
         }
         "sonic_rs_value" => {
-            let v: sonic_rs::Value = sonic_rs::from_slice(src).expect("valid");
+            let v: sonic_rs::Value = sonic_rs::from_slice(src)?;
             (Box::new(v), "value".to_string())
         }
 
         // --- C libraries ---
         #[cfg(feature = "cbench")]
         "yyjson" => {
-            let doc = dacodec::cbench::YyDoc::parse(src).expect("valid");
+            let doc = dacodec::cbench::YyDoc::parse(src).ok_or("yyjson rejected the corpus")?;
             let n = doc.value_count();
             (Box::new(doc), format!("values={n}"))
         }
@@ -489,8 +527,7 @@ fn run(which: &str, src: &[u8]) -> (Keep, String) {
         }
 
         other => {
-            eprintln!("unknown impl {other:?}; try one of: {}", IMPLS.join(" "));
-            std::process::exit(2);
+            return Err(format!("unknown impl {other:?}; try one of: {}", IMPLS.join(" ")).into())
         }
-    }
+    })
 }

@@ -166,6 +166,16 @@ one. `pull::Raw::bytes` still hands over the raw extent.
 
 ---
 
+## Threads
+
+Nothing in the crate is shared mutable state, so nothing in it needs a
+lock, and every public type is `Send + Sync` (`tests/thread_safety.rs`
+asserts it at compile time and then stress-tests it under
+ThreadSanitizer). That matters for `no_std` for one specific reason:
+which SIMD kernel Stage 1 uses is chosen by `target_feature` at compile
+time, not by a cached runtime probe. There is no `Once`, no atomic, and
+no lazy initialisation to make work without `std`.
+
 ## What an rlib build does not prove
 
 `cargo build --target thumbv7em-none-eabihf` on a library produces an
