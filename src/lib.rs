@@ -21,14 +21,14 @@
 //! | [`from_str`], [`to_string`] and friends | the `serde_json`-shaped API |
 //! | [`Parser`] | reusable buffers; no allocation in steady state |
 //! | [`flat`] | a zero-copy wire format — read a field in nanoseconds, no parsing |
-//! | [`pull`], [`write`] | read and write JSON with no allocator at all |
+//! | [`pull`], [`mod@write`] | read and write JSON with no allocator at all |
 //! | `tiers`, `onepass` | reference implementations, for measurement (`vela-compat` feature) |
 //!
 //! # `no_std`
 //!
 //! `--no-default-features` gives a crate that builds for a bare-metal
 //! target with no OS and no allocator — [`pull`] to read fields out of a
-//! document, [`write`] to build one into a `&mut [u8]`, and the byte
+//! document, [`mod@write`] to build one into a `&mut [u8]`, and the byte
 //! classifiers. Neither allocates, including on the error path.
 //!
 //! ```toml
@@ -112,10 +112,10 @@ mod errmsg;
 
 // --- neither an allocator nor an OS ----------------------------------
 
-// The one-line summaries that used to live here have moved into the
-// modules' own `//!` docs. An outer `///` on a `pub mod` is concatenated
-// with the module's inner docs but resolved in *this* module's scope, so
-// every `[`Raw::as_str`]`-style link in the merged text broke.
+// No `///` summaries on these declarations. An outer doc comment on a
+// `pub mod` is concatenated with the module's own `//!` docs but
+// resolved in *this* module's scope, so every intra-doc link in the
+// merged text breaks. Each module introduces itself.
 pub mod pull;
 pub mod scalar;
 pub mod scan;
@@ -141,18 +141,8 @@ pub mod strict;
 #[cfg(feature = "alloc")]
 pub mod workspace;
 
-/// Vela's single-pass builder. Requires the `vela-compat` feature.
-///
-/// A reference implementation, not the recommended parser: it does not
-/// validate and truncates floats. Use [`strict`] or the crate root.
 #[cfg(all(feature = "alloc", feature = "vela-compat"))]
 pub mod onepass;
-/// The Vela JSON tiers, ported faithfully. Requires the `vela-compat`
-/// feature.
-///
-/// Reference implementations kept for measurement. They do not validate
-/// and they truncate floats, because Vela's do. Use [`strict`] or the
-/// crate root for anything real; see `docs/TIERS.md`.
 #[cfg(all(feature = "alloc", feature = "vela-compat"))]
 pub mod tiers;
 

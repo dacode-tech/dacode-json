@@ -32,7 +32,8 @@
 //!
 //! A Cargo feature still has a job here — gating a `derive` macro and its
 //! `syn`/`quote` compile cost, the way `serde` does. That is additive and
-//! safe. [`flat_struct!`] is the `macro_rules!` stand-in, so today the crate
+//! safe. [`crate::flat_struct!`] is the `macro_rules!` stand-in, so today
+//! the crate
 //! needs no proc-macro dependency at all.
 //!
 //! # Layout
@@ -87,7 +88,7 @@ pub enum FieldKind {
 
 /// A type with a fixed, compile-time-known field layout.
 ///
-/// Implemented by [`flat_struct!`].
+/// Implemented by [`crate::flat_struct!`].
 pub trait FlatSchema {
     /// Field kinds, in slot order.
     const FIELDS: &'static [FieldKind];

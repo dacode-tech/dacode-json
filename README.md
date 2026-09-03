@@ -293,7 +293,8 @@ cargo clippy --all-targets
 tools/check-features.sh          # every feature combination + two cross targets
 ```
 
-Clippy is clean at every feature combination, not just the default one.
+Clippy is clean at every feature combination, not just the default one, and
+`cargo doc` raises no warnings — there are no broken intra-doc links.
 
 What is covered:
 

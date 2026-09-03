@@ -13,7 +13,7 @@
 //!
 //! # Padding
 //!
-//! simdjson requires [`SIMDJSON_PADDING`] readable bytes past the end of the
+//! simdjson requires [`PADDING`] readable bytes past the end of the
 //! input, and yyjson's in-situ mode requires `YYJSON_PADDING_SIZE` writable
 //! bytes. [`Padded`] handles both.
 
@@ -80,7 +80,7 @@ fn cstr<'a>(p: *const c_char) -> &'a str {
 
 /// An input buffer with trailing slack, as both C libraries require.
 ///
-/// simdjson reads up to `SIMDJSON_PADDING` bytes past the logical end;
+/// simdjson reads up to [`PADDING`] bytes past the logical end;
 /// yyjson's in-situ mode writes there. `len()` stays the logical length.
 #[derive(Debug, Clone)]
 pub struct Padded {

@@ -1,4 +1,9 @@
-//! Single-pass DOM builder — no structural index.
+//! Single-pass DOM builder — no structural index. Requires the
+//! `vela-compat` feature.
+//!
+//! A reference implementation, not the recommended parser: it does not
+//! validate and it truncates floats. Use [`crate::strict`] or the crate
+//! root for anything real.
 //!
 //! Port of `tier3/parse_onepass.vl` (404 lines), Vela's task D1. It
 //! produces a byte-identical [`Pool`] to [`crate::builder`] but reads the

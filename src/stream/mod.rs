@@ -324,17 +324,17 @@ mod sealed {
 ///
 /// # Why this exists
 ///
-/// [`parse_number`] answers "what number is this", so it has to be able
-/// to answer `f64`, so reaching it instantiates `core`'s
-/// correctly-rounded float parser. On `thumbv7em-none-eabihf` that is
-/// 22 KB — `POWER_OF_FIVE_128` alone is 10 416 bytes, and there is no
-/// double-precision FPU, so the arithmetic is soft too. A program that
-/// reads integer fields off a sensor was paying all of it.
+/// The general reading of a number has to be able to answer `f64`, so
+/// reaching it instantiates `core`'s correctly-rounded float parser. On
+/// `thumbv7em-none-eabihf` that is 22 KB — `POWER_OF_FIVE_128` alone is
+/// 10 416 bytes, and there is no double-precision FPU, so the arithmetic
+/// is soft too. A program reading integer fields off a sensor was paying
+/// all of it.
 ///
-/// Implementations here accumulate digits in `Self` and nothing wider, so
-/// a program that only ever asks for an `i32` links no 64-bit arithmetic
-/// and no float code at all. Measured: 24 486 bytes down to 1 852. See
-/// `docs/SIZE.md`.
+/// Implementations here accumulate digits in `Self` and nothing wider,
+/// so a program that only ever asks for an `i32` links no 64-bit
+/// arithmetic and no float code at all. Measured: a `pull` binary goes
+/// from 24 486 bytes to 2 102. See `docs/SIZE.md`.
 ///
 /// # Width is a type, not a feature
 ///

@@ -1,4 +1,10 @@
-//! All four Vela JSON tiers, ported.
+//! All four Vela JSON tiers, ported faithfully. Requires the
+//! `vela-compat` feature.
+//!
+//! Reference implementations kept for measurement, not for use: they do
+//! not validate and they truncate floats, because Vela's do. Use
+//! [`crate::strict`] or the crate root for anything real, and see
+//! `docs/TIERS.md`.
 //!
 //! Vela ships four interchangeable JSON backends under
 //! `bootstrap/stage2/src/stdlib/encoding/json/`, selected at build time by

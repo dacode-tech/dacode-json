@@ -132,7 +132,8 @@ impl<'de> Deserializer<'de> {
     /// Pair an input with a pool built by the **faithful** parser.
     ///
     /// Remember that parser is integer-only and does not validate; prefer
-    /// [`from_strict`] unless you are deliberately measuring it.
+    /// [`from_slice`], which uses [`crate::strict`], unless you are
+    /// deliberately measuring it.
     #[must_use]
     pub fn from_faithful(input: &'de [u8], pool: &'de Pool) -> Self {
         Self::from_doc(Doc::new(input, pool))
