@@ -55,16 +55,24 @@
 //! depth is bounded by [`MAX_DEPTH`]. It builds for a target with no
 //! allocator and no OS, and for 8- and 16-bit ones.
 //!
-//! Two accessors exist for the same field because the choice is worth
-//! 22 KB of flash:
+//! Several accessors exist for the same field because the choice is
+//! worth 22 KB of flash:
 //!
 //! * [`Raw::as_int::<T>`](Raw::as_int) reads digits straight into the
 //!   width you name and refuses fractions. It cannot reach a float
 //!   parser, because it cannot return a float.
-//! * [`Raw::as_i64`] accepts `1.0` as the integer 1, which means it has
-//!   to be able to parse `1.5` first, which links `core`'s
-//!   correctly-rounded float parser — 22 KB on a chip with no
-//!   double-precision FPU.
+//! * [`Raw::as_fixed::<T>`](Raw::as_fixed) reads `12.34` as the integer
+//!   `1234`. A *fractional* reading, still with no float parser: a feed
+//!   quoting two decimal places does not need seventeen significant
+//!   figures, and scaling by a power of ten is the same digit loop with
+//!   the point moved.
+//! * [`Raw::as_f64`] and [`Raw::as_i64`] are the general readings.
+//!   `as_i64` accepts `1.0` as the integer 1, which means it has to be
+//!   able to parse `1.5` first, which links `core`'s correctly-rounded
+//!   float parser — 22 KB on a chip with no double-precision FPU.
+//!
+//! Reading `INPUT`'s one fractional field costs 2 214 bytes through
+//! `as_fixed` and 24 486 through `as_f64`.
 //!
 //! Likewise [`Raw::as_borrowed_str`] against [`Raw::as_str`]: the first
 //! hands back a subslice and needs no allocator, the second expands
@@ -164,6 +172,68 @@ impl<'de> Raw<'de> {
             return None;
         }
         crate::stream::parse_integer(self.bytes, 0, self.bytes.len()).ok()
+    }
+
+    /// Read a fractional number as a scaled integer, without linking a
+    /// float parser.
+    ///
+    /// `scale` is how many decimal places to keep, so the result is the
+    /// value multiplied by `10^scale`:
+    ///
+    /// ```
+    /// # fn main() -> Result<(), dacodec::stream::Error> {
+    /// dacodec::pull::select(br#"[{"c":-12.34,"v":3.9}]"#, &[b"c", b"v"], |got| {
+    ///     // -12.34 °C in hundredths, 3.9 V in millivolts.
+    ///     assert_eq!(got[0].and_then(|v| v.as_fixed::<i32>(2)), Some(-1234));
+    ///     assert_eq!(got[1].and_then(|v| v.as_fixed::<i32>(3)), Some(3900));
+    ///     Ok(())
+    /// })?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// A whole number is fine — `12` at `scale = 2` is `1200` — and so is
+    /// a fraction shorter than the scale, which is zero-padded.
+    ///
+    /// # Truncation, not rounding
+    ///
+    /// Digits past `scale` are **dropped**, towards zero on both signs:
+    /// `12.345` and `-12.345` at `scale = 2` are `1234` and `-1234`.
+    /// Rounding to nearest-even is what a float parser does, and doing it
+    /// here would mean carrying a rounding decision back through the
+    /// digits — the arithmetic this exists to avoid. Truncation is also
+    /// what a caller reading a sensor at a fixed precision expects: the
+    /// extra digits are noise, not information.
+    ///
+    /// If you need the rounded reading, [`as_f64`](Self::as_f64) gives
+    /// you the float and the 22 KB that comes with it.
+    ///
+    /// # What is rejected
+    ///
+    /// `None` if the value is not a number, if the scaled result does not
+    /// fit `T` — `1.0` at `scale = 9` overflows an `i32` — or if the
+    /// number **has an exponent**. `1.234e2` would need the decimal point
+    /// shifted a second time, by a signed amount, before any of this
+    /// applies; [`as_f64`](Self::as_f64) is the reading that accepts it.
+    ///
+    /// [`as_int`](Self::as_int) is this at `scale = 0`, except that
+    /// `as_int` additionally refuses a fraction rather than truncating
+    /// it.
+    ///
+    /// # Why `scale` is an argument and not a const generic
+    ///
+    /// Width is a type parameter here because narrowing it removes
+    /// arithmetic. `scale` removes nothing, so making it a const generic
+    /// only adds a monomorphisation axis. Measured on
+    /// `thumbv7em-none-eabihf`: at one call site the two are **identical**
+    /// at 2 214 bytes, because a literal argument const-folds anyway; at
+    /// three scales the runtime argument is 2 358 bytes and the const
+    /// generic 3 022 — 664 bytes to say the same thing. See `docs/SIZE.md`.
+    #[must_use]
+    pub fn as_fixed<T: crate::stream::Integer>(&self, scale: u32) -> Option<T> {
+        if self.kind != Kind::Number {
+            return None;
+        }
+        crate::stream::parse_fixed(self.bytes, 0, self.bytes.len(), scale).ok()
     }
 
     /// Convert to `i64`, validating the number.
@@ -449,10 +519,10 @@ impl<'de> Cur<'de> {
 // =====================================================================
 
 /// Yields `(key, value)` pairs of one object.
-#[derive(Debug)]
 ///
 /// Stop early — `break` out of the loop — and the rest of the object is
 /// skipped in one go rather than field by field. That is the whole point.
+#[derive(Debug)]
 pub struct Fields<'a, 'de> {
     c: &'a mut Cur<'de>,
     first: bool,
@@ -614,6 +684,87 @@ where
     })
 }
 
+/// Pull named fields out of a single root object, in one pass.
+///
+/// The one-record form of [`select`]. A config file, a manifest, a
+/// response header — anything that is one object rather than a stream of
+/// them — has exactly one set of slots, so there is nothing to hand to a
+/// closure: the array *is* the return value. Destructure it and the
+/// bindings are your struct, checked at compile time to be as many as you
+/// named.
+///
+/// ```
+/// # fn main() -> Result<(), dacodec::stream::Error> {
+/// let src = br#"{"host":"edge","port":8080,"extra":{"skip":[1,2]}}"#;
+/// let [host, port] = dacodec::pull::select_object(src, &[b"host", b"port"])?;
+/// assert_eq!(host.and_then(|v| v.as_borrowed_str()), Some("edge"));
+/// assert_eq!(port.and_then(|v| v.as_int::<u16>()), Some(8080));
+/// # Ok(()) }
+/// ```
+///
+/// # Duplicate keys
+///
+/// The **last** occurrence wins, as in `JSON.parse`, `serde_json` and
+/// Python's `json`. This differs from [`select`], which keeps the first
+/// because it stops scanning a record the moment every name is accounted
+/// for. That trade is worth making across a million-record array and is
+/// worth nothing on one object, so this scans to the closing brace and
+/// matches what every other JSON reader does.
+pub fn select_object<'de, const N: usize>(
+    input: &'de [u8],
+    names: &[&[u8]; N],
+) -> Result<[Option<Raw<'de>>; N]> {
+    select_object_with(input, names, |_, _| {})
+}
+
+/// As [`select_object`], reporting fields that matched none of `names`.
+///
+/// [`select`] and [`select_object`] skip whatever they were not asked
+/// for. That is right for pulling two fields out of a large record and
+/// wrong for reading a document a person wrote by hand, where a mistyped
+/// key is otherwise silently nothing at all — the reader does what it was
+/// told, the writer sees no effect, and neither is wrong.
+///
+/// `unknown` is called with each such `(key, value)` in document order.
+/// The key is raw bytes, still escaped; the value carries its
+/// [`offset`](Raw::offset), which is what a caller needs to say *where*.
+///
+/// ```
+/// # fn main() -> Result<(), dacodec::stream::Error> {
+/// let src = br#"{"prot": 8080, "host": "edge"}"#;
+/// let mut typo = None;
+/// let [host] = dacodec::pull::select_object_with(src, &[b"host"], |key, val| {
+///     typo = Some((key, val.offset()));
+/// })?;
+/// assert_eq!(host.and_then(|v| v.as_borrowed_str()), Some("edge"));
+/// assert_eq!(typo, Some((&b"prot"[..], 9)));
+/// # Ok(()) }
+/// ```
+pub fn select_object_with<'de, const N: usize, F>(
+    input: &'de [u8],
+    names: &[&[u8]; N],
+    mut unknown: F,
+) -> Result<[Option<Raw<'de>>; N]>
+where
+    F: FnMut(&'de [u8], Raw<'de>),
+{
+    let mut got: [Option<Raw<'de>>; N] = [None; N];
+    object(input, |fields| {
+        while let Some((key, val)) = fields.next()? {
+            match names.iter().position(|n| *n == key) {
+                Some(i) => {
+                    if let Some(slot) = got.get_mut(i) {
+                        *slot = Some(val);
+                    }
+                }
+                None => unknown(key, val),
+            }
+        }
+        Ok(())
+    })?;
+    Ok(got)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,6 +826,84 @@ mod tests {
             .map(|a| a.iter().filter_map(|r| r["score"].as_i64()).sum())
             .unwrap_or(0);
         assert_eq!(sum, want);
+    }
+
+    #[test]
+    fn select_object_destructures_into_bindings() {
+        let src = br#"{"host":"edge","port":8080,"junk":{"a":[1,{"b":"}"}]}}"#;
+        let [host, port] = select_object(src, &[b"host", b"port"]).expect("scan");
+        assert_eq!(host.and_then(|v| v.as_borrowed_str()), Some("edge"));
+        assert_eq!(port.and_then(|v| v.as_int::<u16>()), Some(8080));
+    }
+
+    #[test]
+    fn select_object_leaves_absent_names_none() {
+        let [a, b] = select_object(br#"{"a":1}"#, &[b"a", b"b"]).expect("scan");
+        assert!(a.is_some());
+        assert!(b.is_none());
+    }
+
+    #[test]
+    fn select_object_finds_fields_in_any_order() {
+        let [a, b] = select_object(br#"{"b":2,"a":1}"#, &[b"a", b"b"]).expect("scan");
+        assert_eq!(a.and_then(|v| v.as_i64()), Some(1));
+        assert_eq!(b.and_then(|v| v.as_i64()), Some(2));
+    }
+
+    /// The documented deviation from [`select`]: `JSON.parse`, `serde_json`
+    /// and Python all keep the last, and a config file silently taking the
+    /// first of two settings would be a memorable afternoon.
+    #[test]
+    fn select_object_keeps_the_last_duplicate() {
+        let [a] = select_object(br#"{"a":1,"a":2,"a":3}"#, &[b"a"]).expect("scan");
+        assert_eq!(a.and_then(|v| v.as_i64()), Some(3));
+    }
+
+    #[test]
+    fn select_object_reports_unmatched_keys_in_document_order() {
+        let src = br#"{"one":1,"a":2,"two":3,"three":4}"#;
+        let mut seen = Vec::new();
+        let [a] = select_object_with(src, &[b"a"], |k, v| {
+            seen.push((String::from_utf8_lossy(k).into_owned(), v.offset()));
+        })
+        .expect("scan");
+        assert_eq!(a.and_then(|v| v.as_i64()), Some(2));
+        assert_eq!(
+            seen.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["one", "two", "three"]
+        );
+        // The offsets must point at the values, for a caller reporting a
+        // position back to whoever wrote the file.
+        assert!(seen.iter().all(|(_, at)| *at > 0 && *at < src.len()));
+    }
+
+    /// A repeated *known* key is a known key, not an unknown one.
+    #[test]
+    fn a_duplicate_of_a_named_key_is_not_reported_as_unknown() {
+        let mut seen = 0;
+        let _ = select_object_with(br#"{"a":1,"a":2}"#, &[b"a"], |_, _| seen += 1).expect("scan");
+        assert_eq!(seen, 0);
+    }
+
+    #[test]
+    fn select_object_rejects_an_array_root() {
+        assert!(select_object(br#"[{"a":1}]"#, &[b"a"]).is_err());
+    }
+
+    #[test]
+    fn select_object_propagates_a_syntax_error_with_its_offset() {
+        let err = select_object(br#"{"a":1,}"#, &[b"a"]).expect_err("should fail");
+        assert_eq!(err.offset, Some(7));
+    }
+
+    /// Zero names is degenerate but must not misbehave: everything is
+    /// unknown and the array is empty.
+    #[test]
+    fn select_object_with_no_names_reports_everything() {
+        let mut seen = 0;
+        let got = select_object_with(br#"{"a":1,"b":2}"#, &[], |_, _| seen += 1).expect("scan");
+        assert_eq!(got.len(), 0);
+        assert_eq!(seen, 2);
     }
 
     #[test]
@@ -865,6 +1094,182 @@ mod tests {
             });
             assert!(checked, "{src}: field was never offered");
         }
+    }
+
+    /// The scaling itself: padding a short fraction, truncating a long
+    /// one, and accepting a whole number.
+    #[test]
+    fn as_fixed_scales_by_a_power_of_ten() {
+        let cases: &[(&str, u32, Option<i64>)] = &[
+            // json        scale  as_fixed::<i64>
+            ("12.34", 2, Some(1234)),
+            // Fewer fraction digits than the scale: zero-padded.
+            ("12.3", 2, Some(1230)),
+            ("12", 2, Some(1200)),
+            ("0.5", 3, Some(500)),
+            // More than the scale: dropped, not rounded. `.345` at two
+            // places is 34, never 35 — this is the documented choice.
+            ("12.345", 2, Some(1234)),
+            ("12.999", 2, Some(1299)),
+            ("0.9999999", 1, Some(9)),
+            // Scale 0 throws the whole fraction away.
+            ("12.99", 0, Some(12)),
+            ("0.000", 0, Some(0)),
+            // A scale bigger than any fraction is still just padding.
+            ("7", 6, Some(7_000_000)),
+        ];
+        for &(src, scale, want) in cases {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                let v = got[0].expect("field present");
+                assert_eq!(v.as_fixed::<i64>(scale), want, "as_fixed({src}, {scale})");
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        }
+    }
+
+    /// Truncation is towards zero, not towards negative infinity.
+    ///
+    /// `-12.345` at two places is `-1234`. The alternative, `-1235`, is
+    /// what flooring would give and would make the reading asymmetric
+    /// about zero — a sensor swinging either side of zero would show a
+    /// half-count bias. Falls out of accumulating the magnitude and
+    /// subtracting, but it is the kind of thing that gets "simplified"
+    /// later, so it is pinned here.
+    #[test]
+    fn as_fixed_truncates_towards_zero_on_both_signs() {
+        let cases: &[(&str, Option<i32>)] = &[
+            ("12.345", Some(1234)),
+            ("-12.345", Some(-1234)),
+            ("0.999", Some(99)),
+            ("-0.999", Some(-99)),
+            ("-0.001", Some(0)),
+            ("-0.0", Some(0)),
+        ];
+        for &(src, want) in cases {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                assert_eq!(got[0].and_then(|v| v.as_fixed::<i32>(2)), want, "{src}");
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        }
+    }
+
+    /// `as_fixed(0)` and `as_int` agree on everything `as_int` accepts.
+    ///
+    /// They are the same digit loop; if they ever diverge on an integer,
+    /// one of them has grown a bug rather than a feature.
+    #[test]
+    fn as_fixed_at_scale_zero_matches_as_int() {
+        for src in [
+            "0",
+            "-0",
+            "7",
+            "-40",
+            "127",
+            "-128",
+            "9223372036854775807",
+            "-9223372036854775808",
+            "9223372036854775808",
+        ] {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                let v = got[0].expect("field present");
+                assert_eq!(v.as_fixed::<i64>(0), v.as_int::<i64>(), "{src}");
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        }
+    }
+
+    /// The scaled result must fit the width asked for, and overflow is
+    /// `None` rather than a wrap — including overflow caused by the
+    /// scale alone.
+    #[test]
+    fn as_fixed_overflow_is_none_not_a_wrap() {
+        let doc = br#"[{"v":327.68,"w":-327.68,"x":1.0,"y":32.767}]"#;
+        select(doc, &[b"v", b"w", b"x", b"y"], |got| {
+            let (v, w, x, y) = (
+                got[0].expect("v"),
+                got[1].expect("w"),
+                got[2].expect("x"),
+                got[3].expect("y"),
+            );
+            // 32768 is one past i16::MAX; -32768 is exactly i16::MIN, so
+            // the negative side must still succeed where the positive
+            // one fails.
+            assert_eq!(v.as_fixed::<i16>(2), None, "327.68 -> i16");
+            assert_eq!(w.as_fixed::<i16>(2), Some(-32768), "-327.68 -> i16");
+            assert_eq!(y.as_fixed::<i16>(3), Some(32767), "32.767 -> i16");
+            // Overflow from padding alone: the digits fit, the scale does
+            // not.
+            assert_eq!(x.as_fixed::<i32>(9), Some(1_000_000_000), "1.0 at 9");
+            assert_eq!(x.as_fixed::<i32>(10), None, "1.0 at 10");
+            assert_eq!(x.as_fixed::<i32>(u32::MAX), None, "1.0 at u32::MAX");
+            Ok(())
+        })
+        .expect("valid");
+    }
+
+    /// An unsigned width takes a negative only when the truncated result
+    /// is zero, and never wraps.
+    #[test]
+    fn as_fixed_negatives_do_not_wrap_into_unsigned() {
+        for (src, want) in [
+            ("-0.0", Some(0u16)),
+            // Truncates to zero, so it is representable.
+            ("-0.001", Some(0)),
+            ("-0.01", None),
+            ("-1.5", None),
+        ] {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            select(doc.as_bytes(), &[b"v"], |got| {
+                assert_eq!(got[0].and_then(|v| v.as_fixed::<u16>(2)), want, "{src}");
+                Ok(())
+            })
+            .expect("valid");
+        }
+    }
+
+    /// Exponents are refused, and malformed numbers are still refused.
+    ///
+    /// `1.234e2` has a value `as_fixed` could represent; taking it would
+    /// mean a second, signed shift of the point. See the accessor docs —
+    /// if that decision is ever reversed, this test is the one to change.
+    #[test]
+    fn as_fixed_refuses_exponents_and_bad_syntax() {
+        for src in [
+            "1e2", "1.234e2", "1E2", "1e-2", "0.5e1", // exponents
+            "01", "1.", "1e", "-", "+1", "0x10", "--1", ".5", "0.", // malformed
+        ] {
+            let doc = alloc::format!("[{{\"v\":{src}}}]");
+            let mut checked = false;
+            let _ = select(doc.as_bytes(), &[b"v"], |got| {
+                if let Some(v) = got[0] {
+                    assert_eq!(v.as_fixed::<i64>(2), None, "as_fixed({src})");
+                    checked = true;
+                }
+                Ok(())
+            });
+            assert!(checked, "{src}: field was never offered");
+        }
+    }
+
+    /// Only numbers answer; the other kinds are `None`, not a parse of
+    /// their bytes.
+    #[test]
+    fn as_fixed_only_reads_numbers() {
+        let doc = br#"[{"s":"1.5","b":true,"n":null,"a":[1.5],"o":{}}]"#;
+        select(doc, &[b"s", b"b", b"n", b"a", b"o"], |got| {
+            for (i, name) in ["s", "b", "n", "a", "o"].iter().enumerate() {
+                let v = got.get(i).copied().flatten().expect("field present");
+                assert_eq!(v.as_fixed::<i32>(2), None, "{name}");
+            }
+            Ok(())
+        })
+        .expect("valid");
     }
 
     /// Where `pull`'s laxness shows, and that `as_int` does not widen it.

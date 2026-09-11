@@ -18,6 +18,9 @@ size/
                         which is all a Cargo feature could ever give
   src/bin/pullint3.rs   as_int at three widths — what the choice costs
                         when it is actually used
+  src/bin/pullfixed.rs  as_fixed::<i32>(3) on INPUT's one fractional
+                        field — a fraction with no float parser. The
+                        row to compare it against is pullint, not pull
   src/bin/write.rs    dacodec::write, no allocator
   src/bin/flatread.rs   dacodec::flat, read-only, no allocator. Carries a
                         pre-encoded buffer generated from the same input;

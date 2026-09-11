@@ -28,7 +28,7 @@ dacodec = { version = "0.1", default-features = false }
 | `scalar::skip_ws` | whitespace skipping |
 | `tag` | the node type tags |
 | `unescape::borrow_str` | a string as a subslice, when it can be one |
-| `stream::Integer` | the widths `pull::Raw::as_int` reads into |
+| `stream::Integer` | the widths `pull::Raw::as_int` and `as_fixed` read into |
 | `flat`'s readers | `View`, `Ref`, `TypedView`, `StrList` — see below |
 
 Nothing here allocates, on any path, including the error path —
@@ -134,6 +134,27 @@ compiles to the same thing a feature would, and a feature could not
 express two widths in one program at all — while being additive and
 global, so a crate anywhere in the tree could silently narrow another
 crate's integers.
+
+### Reading a fraction should not require it either
+
+`as_int` refuses `1.5`, which left a device quoting decimals with no
+option but the 22 KB. `Raw::as_fixed::<T>(scale)` reads `12.34` as
+`1234`: the same digit loop with the decimal point moved, truncating
+towards zero at the scale and refusing exponents. 2 214 bytes against
+24 486 through `as_f64`.
+
+`scale` is a plain argument and not a const generic — the one place in
+the crate where the width argument does *not* carry over. Narrowing a
+width removes arithmetic; a scale removes nothing, so a const generic
+would buy only monomorphisations. Measured: identical at one call site,
+664 bytes worse at three.
+
+Carrying the fraction range out of `number_syntax` is not free for the
+paths that ignore it: `as_int` grew 32 bytes and the typed path 40. That
+is the price of the struct it returns growing a field, it was minimised
+by measurement rather than reasoning — two narrower shapes were tried
+and both were worse — and it is recorded in `docs/SIZE.md` rather than
+quietly absorbed.
 
 ### `f64::fract` and `f64::abs` are in `std`, not `core`
 

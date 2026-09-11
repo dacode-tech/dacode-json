@@ -148,9 +148,66 @@ pub(crate) enum Num {
     F(f64),
 }
 
+/// Where the parts of a validated number are, without its value.
+///
+/// Two offsets, not four: the integer digits always start at
+/// `neg as usize`, and the fraction digits — when there are any — always
+/// start one byte past `int_end`, because that byte is the `.`.
+///
+/// Keeping it this narrow is not tidiness. Every caller on the no-float
+/// path returns this by value, and the obvious four-offset version cost
+/// 48 bytes of flash in the `pullint` probe where this one costs 32.
+/// Both figures are against the pre-`as_fixed` 2 102; carrying the
+/// fraction range at all is not free, and this is the cheapest shape
+/// found. `docs/SIZE.md` has the rest.
+///
+/// The exponent is a yes/no. Nothing reads its digits without also
+/// reaching the float parser, which reparses the token from scratch.
+#[derive(Clone, Copy)]
+pub(crate) struct Syntax {
+    pub neg: bool,
+    /// One past the last integer digit; also the offset of the `.`, if any.
+    pub int_end: usize,
+    /// One past the last fraction digit, or `int_end` when there is none.
+    pub frac_end: usize,
+    pub has_exp: bool,
+}
+
+impl Syntax {
+    /// The integer digits, within the slice [`number_syntax`] was given.
+    ///
+    /// ASCII `0`–`9`, and never empty: a number has at least one.
+    pub fn int<'a>(&self, s: &'a [u8]) -> &'a [u8] {
+        s.get(usize::from(self.neg)..self.int_end).unwrap_or(&[])
+    }
+
+    /// The fraction digits, empty when there was no `.`.
+    ///
+    /// The `+ 1` steps over the `.`. When there is no fraction,
+    /// `frac_end == int_end`, so the range is backwards, `get` declines
+    /// it, and the answer is the empty slice — which is what a caller
+    /// wants anyway.
+    pub fn frac<'a>(&self, s: &'a [u8]) -> &'a [u8] {
+        s.get(self.int_end + 1..self.frac_end).unwrap_or(&[])
+    }
+
+    /// Whether the token has to be read as a float to be read exactly.
+    ///
+    /// A fact about the spelling, not the value: `1.0` and `1e2` are
+    /// integral and still answer `true`.
+    ///
+    /// Derived rather than cached. Caching it in the padding byte next
+    /// to `has_exp` is free in layout and was tried; it cost 36 bytes of
+    /// flash in `pullint`, because the compare folds into the branch
+    /// that follows it and a stored flag does not.
+    pub fn is_float(&self) -> bool {
+        self.frac_end > self.int_end || self.has_exp
+    }
+}
+
 /// Validate a number's syntax without converting it.
 ///
-/// Returns `(negative, integer-digit range, is_float)`. Skipped fields use
+/// Returns where the digits are, not what they mean. Skipped fields use
 /// this alone: checking `1.7976931348623157e308` is a scan, converting it
 /// is a call into the float parser, and a field the target type ignores
 /// should not pay for the second.
@@ -158,8 +215,10 @@ pub(crate) enum Num {
 /// [`Integer::from_json`] uses it for the same reason: a caller that only
 /// wants an `i32` should not link a float parser. On a target with no
 /// double-precision FPU that is not a nicety — see `docs/SIZE.md`, where
-/// it is 93% of the binary.
-pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usize, bool)> {
+/// it is 93% of the binary. [`parse_fixed`] is the same trick extended to
+/// the fraction digits, which is why they are located and returned rather
+/// than merely stepped over.
+pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<Syntax> {
     if s.is_empty() {
         return Err(Error::at(start, "expected a number"));
     }
@@ -168,7 +227,6 @@ pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usiz
     if neg {
         i = 1;
     }
-    let int_start = i;
     match s.get(i) {
         Some(b'0') => {
             i += 1;
@@ -185,10 +243,11 @@ pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usiz
         _ => return Err(Error::at(start + i, "invalid number")),
     }
     let int_end = i;
-    let mut is_float = false;
+    // Equal to `int_end` means "no fraction", which is what an absent
+    // `.` leaves behind.
+    let mut frac_end = i;
 
     if s.get(i) == Some(&b'.') {
-        is_float = true;
         i += 1;
         let f0 = i;
         while matches!(s.get(i), Some(c) if c.is_ascii_digit()) {
@@ -197,9 +256,11 @@ pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usiz
         if i == f0 {
             return Err(Error::at(start + i, "expected a digit after '.'"));
         }
+        frac_end = i;
     }
+    let mut has_exp = false;
     if matches!(s.get(i), Some(b'e' | b'E')) {
-        is_float = true;
+        has_exp = true;
         i += 1;
         if matches!(s.get(i), Some(b'+' | b'-')) {
             i += 1;
@@ -215,7 +276,12 @@ pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usiz
     if i != s.len() {
         return Err(Error::at(start + i, "trailing characters in number"));
     }
-    Ok((neg, int_start, int_end, is_float))
+    Ok(Syntax {
+        neg,
+        int_end,
+        frac_end,
+        has_exp,
+    })
 }
 
 /// Syntax-check a number the way a skipped field needs, including the
@@ -226,8 +292,7 @@ pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<(bool, usize, usiz
 #[cfg(feature = "serde")]
 pub(crate) fn validate_number(input: &[u8], start: usize, end: usize) -> Result<()> {
     let s = input.get(start..end).unwrap_or(&[]);
-    let (_, _, _, is_float) = number_syntax(s, start)?;
-    if is_float {
+    if number_syntax(s, start)?.is_float() {
         // Only floats can overflow, and only then must we actually parse.
         if let Ok(t) = core::str::from_utf8(s) {
             if t.parse::<f64>().map(|v| !v.is_finite()).unwrap_or(true) {
@@ -252,10 +317,10 @@ pub(crate) fn parse_number(input: &[u8], start: usize, end: usize) -> Result<Num
     if s.is_empty() {
         return Err(Error::at(start, "expected a number"));
     }
-    let (neg, int_start, int_end, is_float) = number_syntax(s, start)?;
+    let n = number_syntax(s, start)?;
 
-    if !is_float {
-        let digits = s.get(int_start..int_end).unwrap_or(&[]);
+    if !n.is_float() {
+        let (neg, digits) = (n.neg, n.int(s));
         // Fast path: short enough that u64 cannot overflow.
         if digits.len() <= 19 {
             let mut acc: u64 = 0;
@@ -352,9 +417,44 @@ pub trait Integer: Copy + sealed::Sealed {
     /// `digits` is ASCII `0`–`9`, already validated. `neg` is the sign.
     #[doc(hidden)]
     fn from_json(neg: bool, digits: &[u8]) -> Option<Self>;
+
+    /// Read `int_digits.frac_digits` scaled by `10^scale` as `Self`.
+    ///
+    /// Both slices are validated ASCII `0`–`9`; `frac_digits` may be
+    /// empty. Fraction digits past `scale` are dropped and a short
+    /// fraction is zero-padded, so this is one loop over `scale` digits
+    /// either way. `None` if the scaled value does not fit `Self`.
+    #[doc(hidden)]
+    fn from_json_fixed(
+        neg: bool,
+        int_digits: &[u8],
+        frac_digits: &[u8],
+        scale: u32,
+    ) -> Option<Self>;
 }
 
-macro_rules! signed {
+/// One digit into an accumulator, in the accumulator's own width.
+///
+/// A negative is built by subtracting rather than by negating at the
+/// end: `-128` is a valid `i8` and `-(128i8)` is not representable to
+/// negate. On an unsigned type that same subtraction is what rejects a
+/// negative — `-0` subtracts nothing and survives, `-1` does not — so
+/// signed and unsigned need only this one spelling.
+macro_rules! step {
+    ($t:ty, $v:expr, $d:expr, $neg:expr) => {{
+        // Spelled as a `match` and not as `checked_mul(..).and_then(..)`,
+        // which reads better and costs 8 bytes more in `pullfixed`: the
+        // closure does not fold into the digit loop as cleanly.
+        let x = ($d - b'0') as $t;
+        match <$t>::checked_mul($v, 10) {
+            Some(v) if $neg => v.checked_sub(x),
+            Some(v) => v.checked_add(x),
+            None => None,
+        }
+    }};
+}
+
+macro_rules! integer {
     ($($t:ty),*) => { $(
         impl sealed::Sealed for $t {}
         impl Integer for $t {
@@ -362,32 +462,31 @@ macro_rules! signed {
             fn from_json(neg: bool, digits: &[u8]) -> Option<Self> {
                 let mut v: $t = 0;
                 for &d in digits {
-                    v = v.checked_mul(10)?;
-                    let x = (d - b'0') as $t;
-                    // Accumulate negatives by subtracting rather than
-                    // negating at the end: `-128` is a valid `i8` and
-                    // `-(128i8)` is not representable to negate.
-                    v = if neg { v.checked_sub(x)? } else { v.checked_add(x)? };
+                    v = step!($t, v, d, neg)?;
                 }
                 Some(v)
             }
-        }
-    )* }
-}
 
-macro_rules! unsigned {
-    ($($t:ty),*) => { $(
-        impl sealed::Sealed for $t {}
-        impl Integer for $t {
             #[inline]
-            fn from_json(neg: bool, digits: &[u8]) -> Option<Self> {
-                // `-0` is the only negative an unsigned type can hold.
-                if neg && digits.iter().any(|&d| d != b'0') {
-                    return None;
-                }
+            fn from_json_fixed(
+                neg: bool,
+                int_digits: &[u8],
+                frac_digits: &[u8],
+                scale: u32,
+            ) -> Option<Self> {
                 let mut v: $t = 0;
-                for &d in digits {
-                    v = v.checked_mul(10)?.checked_add((d - b'0') as $t)?;
+                for &d in int_digits {
+                    v = step!($t, v, d, neg)?;
+                }
+                // Exactly `scale` fraction digits, whatever the input
+                // offered: `b'0'` pads a short one and the iterator
+                // simply is not drained on a long one. Truncation
+                // towards zero falls out of stopping early, on both
+                // signs, because the magnitude is what is being built.
+                let mut rest = frac_digits.iter();
+                for _ in 0..scale {
+                    let d = rest.next().copied().unwrap_or(b'0');
+                    v = step!($t, v, d, neg)?;
                 }
                 Some(v)
             }
@@ -395,8 +494,7 @@ macro_rules! unsigned {
     )* }
 }
 
-signed!(i8, i16, i32, i64, i128, isize);
-unsigned!(u8, u16, u32, u64, u128, usize);
+integer!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize);
 
 /// Read `input[start..end]` as an integer of the caller's chosen width.
 ///
@@ -406,10 +504,36 @@ unsigned!(u8, u16, u32, u64, u128, usize);
 /// cost being avoided. [`parse_number`] is the lenient reading.
 pub(crate) fn parse_integer<T: Integer>(input: &[u8], start: usize, end: usize) -> Result<T> {
     let s = input.get(start..end).unwrap_or(&[]);
-    let (neg, int_start, int_end, is_float) = number_syntax(s, start)?;
-    if is_float {
+    let n = number_syntax(s, start)?;
+    if n.is_float() {
         return Err(Error::at(start, "expected an integer, found a float"));
     }
-    let digits = s.get(int_start..int_end).unwrap_or(&[]);
-    T::from_json(neg, digits).ok_or_else(|| Error::at(start, "integer out of range"))
+    T::from_json(n.neg, n.int(s)).ok_or_else(|| Error::at(start, "integer out of range"))
+}
+
+/// Read `input[start..end]` as a fixed-point number scaled by `10^scale`.
+///
+/// `12.34` at `scale = 2` is `1234`; so is `12.349`, and so is
+/// `12.3` — digits past the scale are dropped and a short fraction is
+/// padded. Truncation, not rounding: see [`crate::pull::Raw::as_fixed`]
+/// for why.
+///
+/// Rejects an exponent. `1.234e2` is representable at `scale = 1` and
+/// folding the exponent in would mean a second, signed shift of the
+/// decimal point and a second overflow story, for a spelling that a
+/// device emitting fixed-point data does not use. [`parse_number`] is
+/// the lenient reading, at the cost of the float parser.
+pub(crate) fn parse_fixed<T: Integer>(
+    input: &[u8],
+    start: usize,
+    end: usize,
+    scale: u32,
+) -> Result<T> {
+    let s = input.get(start..end).unwrap_or(&[]);
+    let n = number_syntax(s, start)?;
+    if n.has_exp {
+        return Err(Error::at(start, "fixed-point cannot take an exponent"));
+    }
+    T::from_json_fixed(n.neg, n.int(s), n.frac(s), scale)
+        .ok_or_else(|| Error::at(start, "fixed-point value out of range"))
 }

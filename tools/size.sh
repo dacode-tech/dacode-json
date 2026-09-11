@@ -55,12 +55,12 @@ export CARGO_PROFILE_RELEASE_STRIP=false
 export CARGO_PROFILE_RELEASE_OPT_LEVEL="$OPT"
 
 OUT="size/target/$TRIPLE/release"
-BINS=(pull pullint pullint3 pullbytes write flatread direct serdejson)
+BINS=(pull pullint pullint3 pullfixed pullbytes write flatread direct serdejson)
 
 echo "building rust (opt-level = $OPT) ..."
 ( cd size && cargo build --release --quiet --bin floor )
 for b in "${BINS[@]}"; do
-    f="$b"; case "$b" in pullbytes|pullint|pullint3) f=pull ;; esac
+    f="$b"; case "$b" in pullbytes|pullint|pullint3|pullfixed) f=pull ;; esac
     ( cd size && cargo build --release --quiet --features "$f" --bin "$b" )
 done
 

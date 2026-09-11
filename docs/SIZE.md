@@ -62,13 +62,14 @@ Bytes of `.text` + `.rodata`, with the floor subtracted.
 | | total | Rust runtime | the library |
 |---|---:|---:|---:|
 | `pull`, locating fields only | **1 742** | 130 | 1 612 |
-| `pull` + `as_int::<i32>` | **2 102** | 122 | 1 980 |
 | `flat`, read-only | **2 118** | 858 | 1 260 |
-| `pull` + `as_int` at three widths | **2 890** | 146 | 2 744 |
+| `pull` + `as_int::<i32>` | **2 134** | 122 | 2 012 |
+| `pull` + `as_fixed::<i32>(3)` | **2 214** | 122 | 2 092 |
+| `pull` + `as_int` at three widths | **2 928** | 144 | 2 784 |
 | `write` | **5 896** | 3 686 | 2 210 |
 | `pull` + `as_i64` | **24 486** | 19 496 | 4 990 |
 | `serde_json` (`no_std` + `alloc`) | **29 964** | 13 479 | 16 485 |
-| `dacodec` typed (`serde` + `alloc`) | **43 468** | 28 847 | 14 621 |
+| `dacodec` typed (`serde` + `alloc`) | **43 508** | 28 875 | 14 633 |
 | yyjson (C, reader only) | **69 316** | 6 698 | 62 618 |
 | simdjson | — | — | does not compile |
 | sonic-rs | — | — | does not compile |
@@ -83,19 +84,24 @@ supplies it, so the total is what actually lands in flash.
 | | `z` | `s` | `3` |
 |---|---:|---:|---:|
 | `pull`, locating fields only | 1 742 | 2 058 | 5 228 |
-| `pull` + `as_int::<i32>` | 2 102 | 2 730 | 5 278 |
-| `flat`, read-only | 2 118 | 2 446 | 3 550 |
-| `pull` + `as_int`, three widths | 2 890 | 3 298 | 6 864 |
+| `flat`, read-only | 2 118 | 1 302 | 1 304 |
+| `pull` + `as_int::<i32>` | 2 134 | 2 778 | 5 338 |
+| `pull` + `as_fixed::<i32>(3)` | 2 214 | 2 882 | 5 492 |
+| `pull` + `as_int`, three widths | 2 928 | 3 460 | 6 780 |
 | `write` | 5 896 | 4 196 | 4 640 |
-| `pull` + `as_i64` | 24 486 | 25 050 | 29 262 |
+| `pull` + `as_i64` | 24 486 | 25 082 | 29 286 |
 | `serde_json` | 29 964 | 32 520 | 59 760 |
-| `dacodec` typed | 43 468 | 46 968 | 81 448 |
+| `dacodec` typed | 43 508 | 46 992 | 81 480 |
 | yyjson | 69 316 | 79 402 | 113 822 |
 
-Ordering is stable across all three. `write` is smaller at `s` than at
-`z` because `z` declines to inline a copy loop and links
-`compiler_builtins`' out-of-line `memmove` instead — 3 686 bytes of
-runtime against 1 848.
+Ordering is stable across all three, with one exception: `flat` is the
+smallest thing in the table at `s` and `3` and third smallest at `z`,
+because it is the only reader with no parser to inline — `z` declines to
+inline its copy and links `compiler_builtins`' `memmove` (858 bytes of
+runtime against 116), which the other two levels do not.
+
+`write` is smaller at `s` than at `z` for the same reason, and more of
+it: 3 686 bytes of runtime against 1 848.
 
 ---
 
@@ -120,7 +126,57 @@ not converting it — is 1 742. Everything in between is reached because
 `Raw::as_int::<T>()` is the accessor that does not. It reads the digit
 range `number_syntax` already found, accumulates in `T`, and refuses
 anything with a fraction or an exponent — so it never reaches the float
-parser, and never links it. **24 486 bytes to 2 102.**
+parser, and never links it. **24 486 bytes to 2 134.**
+
+### A fraction does not need a float either
+
+`as_int` refuses `1.5`, which leaves a feed quoting decimals with no
+option but the 22 KB. `Raw::as_fixed::<T>(scale)` is the third reading:
+`12.34` at `scale = 2` is the integer `1234`. **2 214 bytes**, against
+24 486 for the same field through `as_f64`.
+
+There is no new machinery. `number_syntax` was already locating the
+fraction digits in order to step over them, so returning where they are
+costs nothing; scaling by `10^scale` is the same `checked_mul(10)` digit
+loop with the decimal point moved, padding a short fraction with `b'0'`
+and simply not draining the iterator on a long one.
+
+The cost is on the other side of the ledger and should be recorded:
+carrying the fraction range through `number_syntax` added **32 bytes to
+`as_int`** (2 102 → 2 134) and 40 to the typed path, because the struct
+it returns grew a field. Two shapes were tried and rejected by
+measurement — a four-offset struct (+48 rather than +32, too wide for
+the return registers) and caching `is_float` in the padding byte that
+was already there (+36, because the derived compare folds into the
+branch that follows it and a stored flag does not).
+
+Truncation, not rounding: `12.345` at `scale = 2` is `1234`, towards
+zero on both signs. Rounding would mean carrying a decision back through
+the digits, which is the arithmetic being avoided, and a half-count bias
+about zero is worse than a lost digit for a caller reading a sensor.
+
+Exponents are refused. `1.234e2` would need a second, signed shift of
+the point before any of this applies, and it is not a spelling that
+devices emitting fixed-point data use.
+
+### `scale` is an argument; width is a type
+
+Width is a type parameter because narrowing it removes arithmetic (see
+below). `scale` removes nothing, so a const generic would only add a
+monomorphisation axis. Measured:
+
+| | bytes |
+|---|---:|
+| `as_fixed::<i32>(3)`, runtime argument | 2 214 |
+| `as_fixed::<i32, 3>()`, const generic | 2 214 |
+| three scales, runtime argument | 2 358 |
+| three scales, const generic | 3 022 |
+
+At one call site they are byte-identical, because a literal argument
+const-folds and the loop unrolls anyway. At three, the const generic
+costs 664 bytes to say the same thing. This is the mirror image of the
+width result: the same reasoning, run again, coming out the other way —
+which is why it was measured rather than assumed.
 
 `docs/RESULTS.md` records that `serde_json`'s float parser is *not*
 correctly rounded, by up to 2 ULP. This is the other side of that
@@ -132,7 +188,7 @@ float parser worse.
 ### `flat` is the cheapest way to read a whole document
 
 2 118 bytes, of which 1 260 is the library, for random access to every
-field of every record — where `pull` at 2 102 gives you one named field
+field of every record — where `pull` at 2 134 gives you one named field
 per pass and nothing else.
 
 That is not a parser, which is the point. The buffer is built on a host
@@ -170,9 +226,16 @@ feature compiles to. Measured, on ARM32:
 | hand-written non-generic `i32` path — what a feature would emit | 2 446 |
 | `as_int` at three widths in one program | 3 210 |
 
+Unlike the rest of this file these three are `.text` + `.rodata` before
+the floor is subtracted, and all three were taken at one commit, before
+`as_fixed` added 32 bytes to every `as_int` row. The middle row's probe
+was written for the comparison and not kept, so the table is left as it
+was measured rather than half-refreshed; the current figures are 2 454
+and 3 248, and the gaps are what the argument rests on.
+
 The generic is 24 bytes *smaller* at one width, which is codegen noise;
 the point is that there is no monomorphisation penalty to pay unless the
-choice is actually used, and then it is 394 bytes per extra width.
+choice is actually used, and then it is ~395 bytes per extra width.
 A feature could not offer that choice at all.
 
 A mistake, because Cargo features are additive and global. A crate

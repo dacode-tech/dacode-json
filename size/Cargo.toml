@@ -57,6 +57,11 @@ path = "src/bin/pullint3.rs"
 required-features = ["pull"]
 
 [[bin]]
+name = "pullfixed"
+path = "src/bin/pullfixed.rs"
+required-features = ["pull"]
+
+[[bin]]
 name = "flatread"
 path = "src/bin/flatread.rs"
 required-features = ["flatread"]

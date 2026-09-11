@@ -522,34 +522,43 @@ a fixed buffer and sum a field. `.text` + `.rodata`, floor subtracted:
 | | bytes |
 |---|---:|
 | `pull`, locating fields only | **1 742** |
-| `pull` + `as_int::<i32>` | **2 102** |
 | `flat`, read-only | **2 118** |
+| `pull` + `as_int::<i32>` | **2 134** |
+| `pull` + `as_fixed::<i32>(3)` | **2 214** |
 | `write` | **5 896** |
 | `pull` + `as_i64` | 24 486 |
 | `serde_json` (`no_std` + `alloc`) | 29 964 |
-| `dacodec` typed (`serde` + `alloc`) | 43 468 |
+| `dacodec` typed (`serde` + `alloc`) | 43 508 |
 | yyjson (C, reader only) | 69 316 |
 | simdjson, sonic-rs | neither compiles for the target |
 
-The gap between rows 2 and 4 is `core`'s correctly-rounded float parser —
-22 KB, reached because `as_i64` accepts an integral float and so must be
-able to parse one. `as_int::<T>()` reads the digits into the width you ask
-for and refuses fractions, so it never links any of it:
+The gap between the fractional rows — 2 214 and 24 486 — is `core`'s
+correctly-rounded float parser. 22 KB, reached because `as_i64` and
+`as_f64` must be able to parse `1.5` even when the answer is an integer.
+The two accessors that cannot reach it read the digits into the width you
+ask for:
 
 ```rust
-dacodec::pull::select(json, &[b"t", b"h"], |got| {
+dacodec::pull::select(json, &[b"t", b"h", b"v"], |got| {
     let temp: i16 = got[0].and_then(|v| v.as_int()).unwrap_or(0);
     let hum:  u8  = got[1].and_then(|v| v.as_int()).unwrap_or(0);
+    // `3.9` as millivolts, no float parser: 3 900.
+    let mv:   i32 = got[2].and_then(|v| v.as_fixed(3)).unwrap_or(0);
     Ok(())
 })?;
 ```
+
+`as_int` refuses a fraction outright; `as_fixed` reads one as a scaled
+integer, truncating towards zero at the scale and refusing exponents.
 
 Width is a type parameter and not a Cargo feature, for the same reason
 `flat`'s layout is: features are additive and global. It costs nothing —
 a generic instantiated once is 2 422 bytes against 2 446 for a
 hand-written non-generic equivalent, and each additional width in one
-program is 394 bytes. Measured on 8-bit AVR and 16-bit MSP430 as well as
-ARM32.
+program is ~395 bytes. Measured on 8-bit AVR and 16-bit MSP430 as well as
+ARM32. `scale` is *not* a type parameter, on the same evidence read the
+other way: it is byte-identical at one call site and 664 bytes worse at
+three.
 
 yyjson is the largest thing in the table because `yyjson_read_opts` is a
 single 47 KB `always_inline` function. Method, caveats and the full
