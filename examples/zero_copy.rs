@@ -4,7 +4,7 @@
 //!
 //! Parsing is cheap once and expensive a thousand times. For data written
 //! once and read repeatedly — a cache, an mmapped file, an RPC payload —
-//! `dacodec::flat` stores a document in a self-contained buffer that is
+//! `dacode_json::flat` stores a document in a self-contained buffer that is
 //! read directly.
 //!
 //! Reading a 10.4 MiB document this way costs **2 allocations and 36
@@ -13,9 +13,9 @@
 
 use std::time::Instant;
 
-use dacodec::flat::typed::{de, TypedView, TypedWriter};
-use dacodec::flat::{self, View};
-use dacodec::flat_struct;
+use dacode_json::flat::typed::{de, TypedView, TypedWriter};
+use dacode_json::flat::{self, View};
+use dacode_json::flat_struct;
 use serde::Deserialize;
 
 // The schema. Field positions become compile-time constants, so keys are
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =================================================================
     // 1. Dynamic: any JSON, no schema needed
     // =================================================================
-    let mut p = dacodec::Parser::new();
+    let mut p = dacode_json::Parser::new();
     let buf = flat::encode(p.parse(JSON.as_bytes())?)?;
 
     println!("json      {} bytes", JSON.len());

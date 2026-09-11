@@ -6,11 +6,11 @@
 //! whole argument for choosing the layout with a type instead of a Cargo
 //! feature, so it gets the most tests.
 
-use dacodec::corpus;
-use dacodec::flat::typed::{FlatSchema, TypedView, TypedWriter};
-use dacodec::flat::{self, Error};
-use dacodec::flat_struct;
-use dacodec::strict::StrictParser;
+use dacode_json::corpus;
+use dacode_json::flat::typed::{FlatSchema, TypedView, TypedWriter};
+use dacode_json::flat::{self, Error};
+use dacode_json::flat_struct;
+use dacode_json::strict::StrictParser;
 
 flat_struct! {
     /// The records corpus row.
@@ -440,8 +440,8 @@ fn typed_is_smaller_than_dynamic() {
 mod serde_bridge {
     use super::{Record, RecordFields};
     use serde::Deserialize;
-    use dacodec::corpus;
-    use dacodec::flat::typed::{de, TypedView, TypedWriter};
+    use dacode_json::corpus;
+    use dacode_json::flat::typed::{de, TypedView, TypedWriter};
 
     /// Borrowing form: every string points into the buffer.
     #[derive(Debug, Deserialize, PartialEq)]

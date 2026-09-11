@@ -124,12 +124,12 @@ pub fn from_slice<T: serde::de::DeserializeOwned>(input: &[u8]) -> Result<T> {
 /// ```
 /// # use serde::Deserialize;
 /// # #[derive(Deserialize)] struct Row<'a> { #[serde(borrow)] name: &'a str }
-/// let mut idx = dacodec::stream::Index::default();
+/// let mut idx = dacode_json::stream::Index::default();
 /// for src in [r#"{"name":"a"}"#, r#"{"name":"b"}"#] {
-///     let row: Row<'_> = dacodec::stream::from_slice_with(&mut idx, src.as_bytes())?;
+///     let row: Row<'_> = dacode_json::stream::from_slice_with(&mut idx, src.as_bytes())?;
 ///     assert!(!row.name.is_empty());
 /// }
-/// # Ok::<(), dacodec::stream::Error>(())
+/// # Ok::<(), dacode_json::stream::Error>(())
 /// ```
 pub fn from_slice_with<'de, T: serde::Deserialize<'de>>(
     idx: &'de mut StructuralIndex,

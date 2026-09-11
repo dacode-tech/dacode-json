@@ -11,8 +11,8 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
-use dacodec::corpus;
-use dacodec::scan::{scan_into, Scanner, StructuralIndex};
+use dacode_json::corpus;
+use dacode_json::scan::{scan_into, Scanner, StructuralIndex};
 
 const TARGET: usize = 1 << 20; // 1 MiB per corpus
 const SEED: u64 = 0x5CA7;
@@ -56,7 +56,7 @@ fn bench_density(c: &mut Criterion) {
 
     for (name, json) in &cases {
         let bytes = json.as_bytes();
-        let idx = dacodec::scan::scan(Scanner::Scalar, bytes);
+        let idx = dacode_json::scan::scan(Scanner::Scalar, bytes);
         let density = idx.len() as f64 / bytes.len() as f64;
         println!("  {name}: {:.4} structurals/byte", density);
 
@@ -82,8 +82,8 @@ fn bench_density(c: &mut Criterion) {
 /// (`P1_2_JSON_TIERS.md:91`) is actually the faster technique on this
 /// hardware.
 fn bench_classifier(c: &mut Criterion) {
-    use dacodec::scan::branchless::{classify, classify_scalar};
-    use dacodec::scan::table::{classify_lut256, classify_shuffle};
+    use dacode_json::scan::branchless::{classify, classify_scalar};
+    use dacode_json::scan::table::{classify_lut256, classify_shuffle};
 
     let json = corpus::sized(1 << 20, SEED, corpus::records);
     let bytes = json.as_bytes();
@@ -91,13 +91,13 @@ fn bench_classifier(c: &mut Criterion) {
     let mut group = c.benchmark_group("classifier_only");
     group.throughput(Throughput::Bytes(bytes.len() as u64));
 
-    type ClassifyFn = fn(&[u8; 16]) -> dacodec::scan::branchless::Classified;
+    type ClassifyFn = fn(&[u8; 16]) -> dacode_json::scan::branchless::Classified;
     let variants: [(&str, ClassifyFn); 5] = [
         ("scalar_match", classify_scalar as ClassifyFn),
         ("lut256", classify_lut256),
         ("simd_compare_8x", classify),
         ("simd_shuffle_table", classify_shuffle),
-        ("simd_hybrid", dacodec::scan::table::classify_hybrid),
+        ("simd_hybrid", dacode_json::scan::table::classify_hybrid),
     ];
 
     for (name, f) in variants {
@@ -131,8 +131,8 @@ fn bench_classifier(c: &mut Criterion) {
 ///
 /// The deltas say which part is worth optimising.
 fn bench_phases(c: &mut Criterion) {
-    use dacodec::scan::branchless::{find_escaped, prefix_xor16};
-    use dacodec::scan::table::classify_hybrid;
+    use dacode_json::scan::branchless::{find_escaped, prefix_xor16};
+    use dacode_json::scan::table::classify_hybrid;
 
     let mut group = c.benchmark_group("stage1_phases");
 

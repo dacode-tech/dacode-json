@@ -1,7 +1,7 @@
 //! Buffer sizes for each jsonflat configuration, against JSON and rkyv.
-use dacodec::flat::{Builder, Intern};
-use dacodec::strict::StrictParser;
-use dacodec::corpus;
+use dacode_json::flat::{Builder, Intern};
+use dacode_json::strict::StrictParser;
+use dacode_json::corpus;
 
 fn main() {
     for (name, json) in corpus::suite(1 << 20, 0x2C0) {

@@ -8,10 +8,10 @@
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
-use dacodec::builder::{build_from_index, pool_capacity_for, Stack};
-use dacodec::corpus;
-use dacodec::pool::Pool;
-use dacodec::scan::{scan, Scanner, StructuralIndex};
+use dacode_json::builder::{build_from_index, pool_capacity_for, Stack};
+use dacode_json::corpus;
+use dacode_json::pool::Pool;
+use dacode_json::scan::{scan, Scanner, StructuralIndex};
 
 const SEED: u64 = 0x5CA7;
 
@@ -87,7 +87,7 @@ fn bench_split(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("stage1_scan", name), &name, |b, _| {
             b.iter(|| {
                 idx.clear();
-                dacodec::scan::scan_into(Scanner::default(), black_box(&input), &mut idx);
+                dacode_json::scan::scan_into(Scanner::default(), black_box(&input), &mut idx);
                 black_box(idx.len())
             });
         });
@@ -223,7 +223,7 @@ fn bench_onepass(_c: &mut Criterion) {}
 
 #[cfg(feature = "vela-compat")]
 fn bench_onepass(c: &mut Criterion) {
-    use dacodec::{onepass::OnePass, Workspace};
+    use dacode_json::{onepass::OnePass, Workspace};
 
     #[inline(never)]
     fn w_indexed(ws: &mut Workspace, src: &[u8]) -> usize {

@@ -9,7 +9,7 @@
 //! the value did not fit.
 //!
 //! ```
-//! use dacodec::write::Writer;
+//! use dacode_json::write::Writer;
 //!
 //! let mut buf = [0u8; 128];
 //! let mut w = Writer::new(&mut buf);
@@ -27,7 +27,7 @@
 //!     w.finish()?,
 //!     r#"{"id":7,"name":"alpha \"quoted\"","tags":["a","b"]}"#
 //! );
-//! # Ok::<(), dacodec::write::Error>(())
+//! # Ok::<(), dacode_json::write::Error>(())
 //! ```
 //!
 //! # What it does and does not check

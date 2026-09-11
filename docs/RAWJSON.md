@@ -5,7 +5,7 @@
 > subsequent turn. How do we embed it in a larger document without the round
 > trip perturbing it?"*
 
-**With `RawJson`, behind the `raw_value` feature.** It is `dacodec`'s
+**With `RawJson`, behind the `raw_value` feature.** It is `dacode-json`'s
 counterpart of `serde_json`'s `RawValue`: an owned, validated JSON document
 carried as text and written back out **byte-for-byte** — no re-escaping, no
 re-encoding, no key reordering. `src/raw.rs`, no `unsafe`.
@@ -59,7 +59,7 @@ and the field comes out as raw JSON, not a quoted string:
 struct Event { name: String, args: RawJson }
 
 let e = Event { name: "edit".into(), args: r#"{"path":"a.rs"}"#.parse()? };
-assert_eq!(dacodec::to_string(&e)?, r#"{"name":"edit","args":{"path":"a.rs"}}"#);
+assert_eq!(dacode_json::to_string(&e)?, r#"{"name":"edit","args":{"path":"a.rs"}}"#);
 ```
 
 ## 3. How the splice works
@@ -69,10 +69,10 @@ the one `serde_json` uses: a **sentinel**. `RawJson::serialize` emits
 `serialize_struct(TOKEN, 1)` + `serialize_field(TOKEN, &text)`, where
 
 ```rust
-pub const TOKEN: &str = "$dacodec::private::RawJson";
+pub const TOKEN: &str = "$dacode_json::private::RawJson";
 ```
 
-`dacodec`'s serializer recognizes `TOKEN` in `serialize_struct` (`ser.rs`), opens
+`dacode-json`'s serializer recognizes `TOKEN` in `serialize_struct` (`ser.rs`), opens
 **no brace** (`Close::RawValue`), and routes the single field through a
 `RawEmitter` whose `serialize_str` does `out.extend_from_slice(text.as_bytes())`
 — verbatim. `finish()` closes with nothing. A *foreign* serializer that does not
@@ -81,7 +81,7 @@ does; it never silently produces wrong bytes.
 
 ## 4. Capture fidelity — the subtle part
 
-`dacodec` has three deserializers, and a `RawJson` field is captured differently
+`dacode-json` has three deserializers, and a `RawJson` field is captured differently
 by each. This is inherent to their representations, not an oversight:
 
 | deserializer | entry points | capture | why |
@@ -125,11 +125,11 @@ it; until then it fails loudly rather than guessing.
   byte-exact; the pool re-serializes (§4). If you need byte-exact capture, parse
   with `from_slice`/`Parser`, not `from_doc`.
 - **One extra `Box<str>` per value** versus borrowing `&RawValue` from the input
-  the way `serde_json` allows. `dacodec`'s `RawJson` is always owned — there is
+  the way `serde_json` allows. `dacode-json`'s `RawJson` is always owned — there is
   no borrowed `&RawJson` form — because the use-case (store and re-emit later)
   needs ownership anyway.
 - **The sentinel is a struct named `TOKEN`.** A schema that legitimately has a
-  struct named `$dacodec::private::RawJson` would collide. The name is chosen so
+  struct named `$dacode_json::private::RawJson` would collide. The name is chosen so
   that this does not happen by accident.
 
 ## 7. Reproduce

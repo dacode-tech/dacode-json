@@ -1,4 +1,4 @@
-//! `dacodec::write`, with no allocator.
+//! `dacode_json::write`, with no allocator.
 //!
 //! The other half of the embedded story: build a document into a
 //! caller-supplied `&mut [u8]`. Not the same job as the readers, so its
@@ -14,8 +14,8 @@ pub extern "C" fn _start() -> ! {
     let mut buf = [0u8; 256];
     let n = input().len() as u64;
 
-    let mut w = dacodec::write::Writer::new(&mut buf);
-    let out = (|| -> Result<usize, dacodec::write::Error> {
+    let mut w = dacode_json::write::Writer::new(&mut buf);
+    let out = (|| -> Result<usize, dacode_json::write::Error> {
         w.begin_object()?;
         w.key("bytes")?.u64(n)?;
         w.key("name")?.str("alpha")?;

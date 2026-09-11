@@ -23,11 +23,11 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use rkyv::{rancor::Error as RkyvError, Archive, Deserialize as RkyvDe, Serialize as RkyvSer};
 use serde::{Deserialize, Serialize};
 use std::hint::black_box;
-use dacodec::flat::typed::{TypedView, TypedWriter};
-use dacodec::flat::{self, View};
-use dacodec::flat_struct;
-use dacodec::strict::StrictParser;
-use dacodec::{corpus, Workspace};
+use dacode_json::flat::typed::{TypedView, TypedWriter};
+use dacode_json::flat::{self, View};
+use dacode_json::flat_struct;
+use dacode_json::strict::StrictParser;
+use dacode_json::{corpus, Workspace};
 
 const SEED: u64 = 0x2C0;
 
@@ -457,7 +457,7 @@ fn bench_encode(c: &mut Criterion) {
 /// the destination is a struct rather than a DOM.
 fn bench_struct_de(c: &mut Criterion) {
     use serde::Deserialize;
-    use dacodec::flat::typed::de as flat_de;
+    use dacode_json::flat::typed::de as flat_de;
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct RowRef<'a> {

@@ -12,7 +12,7 @@ size/
                       allocator. Shared, so the only difference between
                       two binaries is the JSON library.
   src/bin/floor.rs    the shim alone — the number subtracted from the rest
-  src/bin/pull.rs     dacodec::pull, no allocator
+  src/bin/pull.rs     dacode_json::pull, no allocator
   src/bin/pullbytes.rs  the same, stopping before number conversion
   src/bin/pullint.rs    the same, with as_int::<i32> — one instantiation,
                         which is all a Cargo feature could ever give
@@ -21,11 +21,11 @@ size/
   src/bin/pullfixed.rs  as_fixed::<i32>(3) on INPUT's one fractional
                         field — a fraction with no float parser. The
                         row to compare it against is pullint, not pull
-  src/bin/write.rs    dacodec::write, no allocator
-  src/bin/flatread.rs   dacodec::flat, read-only, no allocator. Carries a
+  src/bin/write.rs    dacode_json::write, no allocator
+  src/bin/flatread.rs   dacode_json::flat, read-only, no allocator. Carries a
                         pre-encoded buffer generated from the same input;
                         regenerate it with the snippet in src/lib.rs
-  src/bin/direct.rs   dacodec through serde, with an allocator
+  src/bin/direct.rs   dacode-json through serde, with an allocator
   src/bin/serdejson.rs  serde_json, no_std + alloc
   cbase/              the C contenders and their freestanding libc shims
   link.x              a minimal Cortex-M layout, so there is something to
@@ -46,7 +46,7 @@ uninstantiated, so a library has no size until monomorphisation and
 ## Adding a contender
 
 One bin, one feature, one `[[bin]]` entry with `required-features`. The
-feature matters: cargo unifies features per invocation, so `dacodec`
+feature matters: cargo unifies features per invocation, so `dacode-json`
 cannot be both `--no-default-features` and `--features serde` in the same
 build. `tools/size.sh` therefore invokes `cargo build` once per
 contender.

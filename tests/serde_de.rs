@@ -6,9 +6,9 @@
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
-use dacodec::corpus;
-use dacodec::de;
-use dacodec::strict::StrictParser;
+use dacode_json::corpus;
+use dacode_json::de;
+use dacode_json::strict::StrictParser;
 
 /// Round-trip a document through both deserializers and require equality.
 #[track_caller]
@@ -355,7 +355,7 @@ fn type_error_messages_match_serde_json() {
     // A sanity check that the type is deserializable at all, which also
     // reads the field so it is not dead.
     assert_eq!(
-        dacodec::from_str::<R>(r#"{"v":7}"#).expect("valid"),
+        dacode_json::from_str::<R>(r#"{"v":7}"#).expect("valid"),
         R { v: 7 }
     );
 
@@ -380,7 +380,7 @@ fn type_error_messages_match_serde_json() {
         let theirs = serde_json::from_str::<R>(src)
             .expect_err("must fail")
             .to_string();
-        let ours = dacodec::from_str::<R>(src)
+        let ours = dacode_json::from_str::<R>(src)
             .expect_err("must fail")
             .to_string();
         let theirs = theirs.split(" at line ").next().unwrap_or(&theirs);

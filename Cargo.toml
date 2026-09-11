@@ -1,10 +1,10 @@
 [package]
-name = "dacodec"
+name = "dacode-json"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
 description = "Fast, allocation-light JSON for Rust: a drop-in serde_json replacement plus a zero-copy wire format"
-repository = "https://github.com/dacode-tech/dacodec"
+repository = "https://github.com/dacode-tech/dacode-json"
 license = "Apache-2.0"
 keywords = ["json", "serde", "parser", "zero-copy", "simd"]
 categories = ["encoding", "parser-implementations"]

@@ -81,7 +81,7 @@ CFLAGS=(
     -nostdlibinc "-I$CDIR/include"
     -ffunction-sections -fdata-sections -fno-stack-protector
     # As `build.rs` does for the throughput benchmarks. It drops yyjson's
-    # comment/inf/nan extensions, which `dacodec` does not have either, so
+    # comment/inf/nan extensions, which `dacode-json` does not have either, so
     # setting it is what makes the two parsers answer the same question.
     -DYYJSON_DISABLE_NON_STANDARD
 )

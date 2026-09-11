@@ -549,8 +549,8 @@ impl<'a> Iterator for StrListIter<'a> {
 /// Declare a flat schema, plus an extension trait of named accessors.
 ///
 /// ```
-/// use dacodec::flat_struct;
-/// use dacodec::flat::typed::{TypedView, TypedWriter};
+/// use dacode_json::flat_struct;
+/// use dacode_json::flat::typed::{TypedView, TypedWriter};
 ///
 /// flat_struct! {
 ///     /// One row of the records corpus.

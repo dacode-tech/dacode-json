@@ -5,7 +5,7 @@
 //! 20 000 random documents, since "byte-identical pool" is a strong and
 //! cheap invariant to check.
 
-use dacodec::{corpus, onepass, Workspace};
+use dacode_json::{corpus, onepass, Workspace};
 
 /// Both builders on the same input; the pools must match node for node.
 #[track_caller]
@@ -116,8 +116,8 @@ fn deserializes_to_the_same_values() {
     let a = ws.parse_to_pool(src);
     let b = onepass::parse_to_pool(src);
 
-    let da = dacodec::Doc::new(src, &a);
-    let db = dacodec::Doc::new(src, &b);
+    let da = dacode_json::Doc::new(src, &a);
+    let db = dacode_json::Doc::new(src, &b);
     assert_eq!(da.root().len(), db.root().len());
 
     for (ea, eb) in da.root().elements().zip(db.root().elements()) {
@@ -143,7 +143,7 @@ fn no_panic_on_arbitrary_bytes() {
         }
         let p = onepass::parse_to_pool(&buf);
         let _ = p.len();
-        let doc = dacodec::Doc::new(&buf, &p);
+        let doc = dacode_json::Doc::new(&buf, &p);
         let _ = doc.root().to_json();
     }
 }

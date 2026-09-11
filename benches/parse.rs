@@ -24,9 +24,9 @@
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
 use simd_json::prelude::*;
-use dacodec::corpus;
-use dacodec::strict::StrictParser;
-use dacodec::Workspace;
+use dacode_json::corpus;
+use dacode_json::strict::StrictParser;
+use dacode_json::Workspace;
 
 const SEED: u64 = 0x5CA7;
 
@@ -57,7 +57,7 @@ fn w_vela_strict(p: &mut StrictParser, src: &[u8]) -> usize {
 
 #[inline(never)]
 fn w_vela_fresh(src: &[u8]) -> usize {
-    dacodec::parse_to_pool(src).len()
+    dacode_json::parse_to_pool(src).len()
 }
 
 #[inline(never)]
@@ -127,7 +127,7 @@ fn bench_corpus(c: &mut Criterion, size: usize, group_name: &str) {
 
         // --- Vela port, conformant but with string validation off ---
         {
-            let opts = dacodec::strict::Options {
+            let opts = dacode_json::strict::Options {
                 validate_strings: false,
                 ..Default::default()
             };

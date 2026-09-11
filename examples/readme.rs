@@ -6,9 +6,9 @@
 //! these are kept here rather than in the README alone, and the README
 //! quotes them.
 
-use dacodec::flat::typed::{de, TypedView, TypedWriter};
-use dacodec::flat::{self, View};
-use dacodec::flat_struct;
+use dacode_json::flat::typed::{de, TypedView, TypedWriter};
+use dacode_json::flat::{self, View};
+use dacode_json::flat_struct;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -35,9 +35,9 @@ flat_struct! {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Quick start -------------------------------------------------
-    let cfg: Config = dacodec::from_str(r#"{"name":"edge","port":8080}"#)?;
+    let cfg: Config = dacode_json::from_str(r#"{"name":"edge","port":8080}"#)?;
     assert_eq!(cfg.port, 8080);
-    let json = dacodec::to_string(&cfg)?;
+    let json = dacode_json::to_string(&cfg)?;
     assert_eq!(json, r#"{"name":"edge","port":8080}"#);
     // Byte-identical to serde_json.
     assert_eq!(json, serde_json::to_string(&cfg)?);
@@ -45,22 +45,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Owned types -------------------------------------------------
     let text = r#"{"name":"edge","port":8080}"#;
-    let a: Config = dacodec::from_str(text)?;
-    let b: Config = dacodec::from_slice(text.as_bytes())?;
-    let c: Config = dacodec::from_reader(text.as_bytes())?;
+    let a: Config = dacode_json::from_str(text)?;
+    let b: Config = dacode_json::from_slice(text.as_bytes())?;
+    let c: Config = dacode_json::from_reader(text.as_bytes())?;
     assert_eq!(a, b);
     assert_eq!(b, c);
 
-    let _s: String = dacodec::to_string(&cfg)?;
-    let _v: Vec<u8> = dacodec::to_vec(&cfg)?;
+    let _s: String = dacode_json::to_string(&cfg)?;
+    let _v: Vec<u8> = dacode_json::to_vec(&cfg)?;
     let mut buffer = Vec::new();
-    dacodec::to_writer(&mut buffer, &cfg)?; // reuses the buffer
+    dacode_json::to_writer(&mut buffer, &cfg)?; // reuses the buffer
     assert_eq!(buffer, _v);
     println!("owned types          ok");
 
     // --- Borrowing types, no copying ---------------------------------
     let bytes = br#"{"id":7,"name":"alpha","tags":["x","y"]}"#;
-    let mut p = dacodec::Parser::new();
+    let mut p = dacode_json::Parser::new();
     let row: Row<'_> = p.deserialize(bytes)?;
     assert_eq!(row.id, 7);
     assert_eq!(row.name, "alpha");
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Parsing many documents --------------------------------------
     let lines: [&[u8]; 3] = [br#"{"status":1}"#, br#"{"status":2}"#, br#"{"status":3}"#];
-    let mut p = dacodec::Parser::with_capacity(64 * 1024);
+    let mut p = dacode_json::Parser::with_capacity(64 * 1024);
     let mut seen = Vec::new();
     for line in lines {
         let doc = p.parse(line)?;
@@ -89,7 +89,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Errors carry a position -------------------------------------
     let bad = r#"{"name":"edge","port":}"#;
-    match dacodec::from_str::<Config>(bad) {
+    match dacode_json::from_str::<Config>(bad) {
         Err(e) => {
             assert_eq!(e.offset(), Some(22));
             println!("error                {e} (byte {:?})", e.offset());
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Zero-copy: dynamic ------------------------------------------
     let json = br#"[{"name":"alpha","n":1},{"name":"beta","n":2}]"#;
-    let mut p = dacodec::Parser::new();
+    let mut p = dacode_json::Parser::new();
     let buf = flat::encode(p.parse(json)?)?;
 
     let view = View::new(&buf)?; // O(1), no parsing

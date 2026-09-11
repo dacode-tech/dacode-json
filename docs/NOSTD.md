@@ -6,7 +6,7 @@ reading fields out of a JSON document, and writing one into a buffer the
 caller supplies.
 
 ```toml
-dacodec = { version = "0.1", default-features = false }
+dacode-json = { version = "0.1", default-features = false }
 ```
 
 `tools/check-features.sh` builds every combination below, plus

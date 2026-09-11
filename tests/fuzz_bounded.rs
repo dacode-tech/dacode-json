@@ -6,8 +6,8 @@
 
 #![cfg(feature = "profiling")]
 
-use dacodec::corpus::Rng;
-use dacodec::fuzz::{check, mutate, seed_corpus};
+use dacode_json::corpus::Rng;
+use dacode_json::fuzz::{check, mutate, seed_corpus};
 
 #[test]
 fn mutated_corpus_finds_nothing() {
@@ -31,7 +31,7 @@ fn mutated_corpus_finds_nothing() {
         let s = seeds.get(pick).map(Vec::as_slice).unwrap_or(b"{}");
         mutate(&mut case_rng, s, &mut buf);
 
-        if dacodec::strict::validate(&buf).is_ok() {
+        if dacode_json::strict::validate(&buf).is_ok() {
             valid += 1;
         }
         let f = check(&buf);

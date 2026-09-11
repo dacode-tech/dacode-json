@@ -1,4 +1,4 @@
-//! `dacodec::pull` reading integers only, one width.
+//! `dacode_json::pull` reading integers only, one width.
 //!
 //! Same job as `pull.rs`, but `as_int::<i32>()` instead of `as_i64()`.
 //! The gap between the two rows is `core`'s float parser.
@@ -15,7 +15,7 @@ use size::{finish, input};
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let mut total = 0i32;
-    let _ = dacodec::pull::select(input(), &[b"score"], |got| {
+    let _ = dacode_json::pull::select(input(), &[b"score"], |got| {
         total = total.wrapping_add(got[0].and_then(|v| v.as_int::<i32>()).unwrap_or(0));
         Ok(())
     });

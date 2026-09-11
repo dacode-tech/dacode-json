@@ -179,8 +179,8 @@ boxed variant differs only in using `Box<str>` and `Box<[Box<str>]>`:
 |---|---|---|---|
 | `serde_json` → `Vec<Record>` | 23.14 MiB | 454 677 | 21.20 MiB |
 | `serde_json` → `Vec<RecordBoxed>` | **16.20 MiB** | 534 879 | 15.75 MiB |
-| `dacodec::stream` → `Vec<Record>` | 36.23 MiB | 454 679 | 59.28 MiB |
-| `dacodec::stream` → `Vec<RecordBoxed>` | **32.14 MiB** | 454 679 | 55.06 MiB |
+| `dacode_json::stream` → `Vec<Record>` | 36.23 MiB | 454 679 | 59.28 MiB |
+| `dacode_json::stream` → `Vec<RecordBoxed>` | **32.14 MiB** | 454 679 | 55.06 MiB |
 
 **Boxing is worth it: 30% less peak memory for `serde_json`, 11% for the
 streaming path.** Three heap fields per record, at 8 bytes of header each

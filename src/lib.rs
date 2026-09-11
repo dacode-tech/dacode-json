@@ -5,9 +5,9 @@
 //! #[derive(Serialize, Deserialize)]
 //! struct Config { name: String, port: u16 }
 //!
-//! let cfg: Config = dacodec::from_str(r#"{"name":"edge","port":8080}"#)?;
-//! let json = dacodec::to_string(&cfg)?;
-//! # Ok::<(), dacodec::Error>(())
+//! let cfg: Config = dacode_json::from_str(r#"{"name":"edge","port":8080}"#)?;
+//! let json = dacode_json::to_string(&cfg)?;
+//! # Ok::<(), dacode_json::Error>(())
 //! ```
 //!
 //! For the typed path this is a drop-in replacement for `serde_json`:
@@ -32,8 +32,8 @@
 //! classifiers. Neither allocates, including on the error path.
 //!
 //! ```toml
-//! dacodec = { version = "0.1", default-features = false }            # core
-//! dacodec = { version = "0.1", default-features = false, features = ["alloc"] }
+//! dacode-json = { version = "0.1", default-features = false }            # core
+//! dacode-json = { version = "0.1", default-features = false, features = ["alloc"] }
 //! ```
 //!
 //! `alloc` adds the node pool and the [`flat`] builders; `std` adds

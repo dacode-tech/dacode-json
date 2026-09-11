@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 1. Parse each line into a borrowing struct ------------------
     println!("events:");
     for line in LOG.lines().filter(|l| !l.trim().is_empty()) {
-        let ev: Event<'_> = dacodec::direct::from_slice_borrowed(line.as_bytes())?;
+        let ev: Event<'_> = dacode_json::direct::from_slice_borrowed(line.as_bytes())?;
         println!(
             "  {} {:<5} {:<16} tags={:?}",
             ev.ts, ev.level, ev.msg, ev.tags
@@ -59,14 +59,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // number is converted, no string is unescaped.
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for line in LOG.lines().filter(|l| !l.trim().is_empty()) {
-        let row: LevelOnly<'_> = dacodec::direct::from_slice_borrowed(line.as_bytes())?;
+        let row: LevelOnly<'_> = dacode_json::direct::from_slice_borrowed(line.as_bytes())?;
         *counts.entry(row.level).or_default() += 1;
     }
     println!("\nlevels: {counts:?}");
 
     // --- 3. A malformed line reports where ---------------------------
     let bad = r#"{"ts":4,"level":"info","msg":}"#;
-    match dacodec::direct::from_slice::<serde_json::Value>(bad.as_bytes()) {
+    match dacode_json::direct::from_slice::<serde_json::Value>(bad.as_bytes()) {
         Err(e) => println!("\nrejected at byte {:?}: {e}", e.offset),
         Ok(_) => println!("\nunexpectedly accepted"),
     }
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mixed = [r#"{"level":"info"}"#, "{oops}", r#"{"level":"error"}"#];
     let (ok, failed): (Vec<_>, Vec<_>) = mixed
         .iter()
-        .map(|l| dacodec::direct::from_slice::<serde_json::Value>(l.as_bytes()))
+        .map(|l| dacode_json::direct::from_slice::<serde_json::Value>(l.as_bytes()))
         .partition(Result::is_ok);
     println!("parsed {} lines, {} failed", ok.len(), failed.len());
 

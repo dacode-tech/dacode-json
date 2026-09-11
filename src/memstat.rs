@@ -191,7 +191,7 @@ static LIVE_PEAK: AtomicUsize = AtomicUsize::new(0);
 ///
 /// ```ignore
 /// #[global_allocator]
-/// static A: dacodec::memstat::Counter = dacodec::memstat::Counter;
+/// static A: dacode_json::memstat::Counter = dacode_json::memstat::Counter;
 /// ```
 ///
 /// The counters are `Relaxed` atomics — a few nanoseconds per allocation,

@@ -29,8 +29,8 @@ pub const INPUT: &[u8] = br#"[
 /// change, from the repository root:
 ///
 /// ```ignore
-/// let mut ws = dacodec::Workspace::new();
-/// let buf = dacodec::flat::encode(ws.parse(INPUT)).unwrap();
+/// let mut ws = dacode_json::Workspace::new();
+/// let buf = dacode_json::flat::encode(ws.parse(INPUT)).unwrap();
 /// // then emit `buf` as a byte array
 /// ```
 mod flat_bytes {

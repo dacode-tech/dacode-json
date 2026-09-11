@@ -9,7 +9,7 @@ width question, on 16-bit MSP430 and 8-bit AVR.
 Reproduce with `tools/size.sh [z|s|3]` and `tools/width.sh`.
 
 The short version: on a bare-metal target the JSON library is not what
-costs. `dacodec::pull`'s own code is 2 544 bytes; the binary around it
+costs. `dacode_json::pull`'s own code is 2 544 bytes; the binary around it
 was 24 KB, and 22 of those were `core`'s float parser, reached through
 an accessor that had to be able to return an `f64`. `Raw::as_int::<T>()`
 is the fix, and it takes the binary to 2 102 bytes.
@@ -46,7 +46,7 @@ copy keeps the choice of runtime out of the comparison.
 
 yyjson is built with `-DYYJSON_DISABLE_NON_STANDARD`, as `build.rs` does
 for the throughput benchmarks. It drops yyjson's comment/inf/nan
-extensions, which `dacodec` does not have either, so setting it is what
+extensions, which `dacode-json` does not have either, so setting it is what
 makes the two parsers answer the same question.
 
 The floor — the shim and nothing else — is 320 bytes for Rust and 324 for
@@ -69,7 +69,7 @@ Bytes of `.text` + `.rodata`, with the floor subtracted.
 | `write` | **5 896** | 3 686 | 2 210 |
 | `pull` + `as_i64` | **24 486** | 19 496 | 4 990 |
 | `serde_json` (`no_std` + `alloc`) | **29 964** | 13 479 | 16 485 |
-| `dacodec` typed (`serde` + `alloc`) | **43 508** | 28 875 | 14 633 |
+| `dacode-json` typed (`serde` + `alloc`) | **43 508** | 28 875 | 14 633 |
 | yyjson (C, reader only) | **69 316** | 6 698 | 62 618 |
 | simdjson | — | — | does not compile |
 | sonic-rs | — | — | does not compile |
@@ -91,7 +91,7 @@ supplies it, so the total is what actually lands in flash.
 | `write` | 5 896 | 4 196 | 4 640 |
 | `pull` + `as_i64` | 24 486 | 25 082 | 29 286 |
 | `serde_json` | 29 964 | 32 520 | 59 760 |
-| `dacodec` typed | 43 508 | 46 992 | 81 480 |
+| `dacode-json` typed | 43 508 | 46 992 | 81 480 |
 | yyjson | 69 316 | 79 402 | 113 822 |
 
 Ordering is stable across all three, with one exception: `flat` is the
@@ -109,7 +109,7 @@ it: 3 686 bytes of runtime against 1 848.
 
 ### 93% of a `pull` binary was `core`'s float parser
 
-`dacodec::pull` summing an integer field through `as_i64` is 24 486
+`dacode_json::pull` summing an integer field through `as_i64` is 24 486
 bytes. The same code stopping at `Raw::bytes` — locating the field but
 not converting it — is 1 742. Everything in between is reached because
 `as_i64` goes through `parse_number`, which has to be able to answer
@@ -121,7 +121,7 @@ not converting it — is 1 742. Everything in between is reached because
 | `core::num::dec2flt::…::from_str` | 2 836 |
 | `dec2flt` helpers (`lemire`, `DecimalSeq`) | ~1 700 |
 | soft-float `__divdf3`, `__muldf3` | 1 696 |
-| **`dacodec::pull` itself** | **2 544** |
+| **`dacode_json::pull` itself** | **2 544** |
 
 `Raw::as_int::<T>()` is the accessor that does not. It reads the digit
 range `number_syntax` already found, accumulates in `T`, and refuses
@@ -180,7 +180,7 @@ which is why it was measured rather than assumed.
 
 `docs/RESULTS.md` records that `serde_json`'s float parser is *not*
 correctly rounded, by up to 2 ULP. This is the other side of that
-ledger: `dacodec` keeps `core`'s correct one, and 13 KB of flash is a
+ledger: `dacode-json` keeps `core`'s correct one, and 13 KB of flash is a
 real thing to weigh against 2 ULP — so the answer is to let a caller
 that does not need floats not pay for them, rather than to make the
 float parser worse.
@@ -311,8 +311,8 @@ it; being explicit does not need that to hold.
 
 ### What is left, and why
 
-`dacodec` typed is 43 KB against `serde_json`'s 30 KB. By attributed
-library code `dacodec` is the *smaller* of the two — 14 621 bytes against
+`dacode-json` typed is 43 KB against `serde_json`'s 30 KB. By attributed
+library code `dacode-json` is the *smaller* of the two — 14 621 bytes against
 16 485 — so the gap is `core`, and it is the float parser again:
 `serde_json` ships its own and never instantiates `core::dec2flt`.
 
@@ -374,9 +374,9 @@ support at all.
 * **The three-record input is small on purpose.** Code size is the
   question; a larger input would grow `.rodata` by the same amount
   everywhere and change no ordering.
-* **`dacodec::pull` and yyjson do not do the same amount of work.**
+* **`dacode_json::pull` and yyjson do not do the same amount of work.**
   yyjson builds a full random-access DOM; `pull` streams and extracts.
-  The comparable row for yyjson is `dacodec` typed (43 KB against
+  The comparable row for yyjson is `dacode-json` typed (43 KB against
   69 KB), and even that is not exact — yyjson leaves you a document you
   can query again.
 * **Only `.text` and `.rodata`.** `.bss` is dominated by the 64 KB bump

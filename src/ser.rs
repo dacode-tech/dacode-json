@@ -894,7 +894,7 @@ impl ser::Serializer for KeySerializer<'_, '_> {
 ///
 /// The sentinel field's value is always the JSON text (a `str`), so
 /// `serialize_str` is the only meaningful input; everything else is a misuse
-/// and errors rather than silently emitting wrong bytes. `dacodec`'s analogue
+/// and errors rather than silently emitting wrong bytes. `dacode-json`'s analogue
 /// of `serde_json`'s `RawValueStrEmitter`.
 #[cfg(feature = "raw_value")]
 struct RawEmitter<'c> {

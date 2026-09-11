@@ -1,4 +1,4 @@
-//! The real conformance suites, run against [`dacodec::strict`].
+//! The real conformance suites, run against [`dacode_json::strict`].
 //!
 //! Everything before this measured conformance against `serde_json` on
 //! generated data. That checks agreement, not correctness — two parsers can
@@ -22,7 +22,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use dacodec::strict;
+use dacode_json::strict;
 
 fn testdata(sub: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(sub)
@@ -227,7 +227,7 @@ fn accepted_documents_parse_to_the_same_values() {
                 continue;
             };
             let Ok(doc) = p.parse(&bytes) else { continue };
-            let got: serde_json::Value = match dacodec::de::from_doc(doc) {
+            let got: serde_json::Value = match dacode_json::de::from_doc(doc) {
                 Ok(v) => v,
                 Err(e) => panic!("{dir}/{name}: accepted but would not deserialize: {e}"),
             };
@@ -397,7 +397,7 @@ fn real_literals_match_serde_json() {
 #[cfg(feature = "vela-compat")]
 #[test]
 fn non_validating_parsers_scored_against_the_suite() {
-    use dacodec::tiers::{tier1::Tier1, tier2::Tier2, tier3::Tier3, JsonTier};
+    use dacode_json::tiers::{tier1::Tier1, tier2::Tier2, tier3::Tier3, JsonTier};
     use std::collections::BTreeMap;
 
     let cases: Vec<(String, Vec<u8>, bool)> = load_dir("test_parsing")

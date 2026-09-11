@@ -11,12 +11,12 @@
 //!
 //! * `rawjson_splice_ser` — three rows over one event: the opaque field held as
 //!   a `RawJson` and spliced, and the same field held as a parsed tree and
-//!   re-encoded, once by `dacodec` and once by `serde_json`. All three emit the
+//!   re-encoded, once by `dacode-json` and once by `serde_json`. All three emit the
 //!   same number of bytes (asserted in setup), so MiB/s is directly comparable
 //!   and the gap is CPU. Quote the ratio against `serde_json_dom`: it is the
 //!   stronger opponent, at ≈110× on the 853 KB payload (112-118× across four
 //!   runs, `tools/isolate.sh` and a shared criterion process alike). Against
-//!   `dacodec_dom` the same measurement reads ≈130×, because `dacodec`'s
+//!   `dacode_json_dom` the same measurement reads ≈130×, because `dacode-json`'s
 //!   serializer drives a foreign enum 8-15% slower than `serde_json` drives its
 //!   own — where in that range depends on size and harness. See *Fairness* below
 //!   before quoting either.
@@ -29,7 +29,7 @@
 //!
 //! Payload size is swept because the shape of the win is the interesting part.
 //! Both arms are linear in payload bytes and the re-encode side has no
-//! measurable fixed cost, so the win is per-byte: against `dacodec_dom` the
+//! measurable fixed cost, so the win is per-byte: against `dacode_json_dom` the
 //! *marginal* ratio is already ~130-150× over the first interval and holds
 //! there. What climbs across the sweep — ~50× at 2 KB, 130× at 853 KB — is the
 //! *total* ratio, and that is the splice arm's own ~50 ns floor falling away:
@@ -55,16 +55,16 @@
 //! prefix.
 //!
 //! The parsed tree is a `serde_json::Value`, which is the *most* favourable
-//! opponent available rather than the least. `dacodec` has no owned DOM that
+//! opponent available rather than the least. `dacode-json` has no owned DOM that
 //! implements `Serialize` — `query::Value<'a>` borrows both the pool and the
-//! input — so the `dacodec`-native way to re-emit a stored payload is `to_json`
+//! input — so the `dacode-json`-native way to re-emit a stored payload is `to_json`
 //! (`src/query.rs:265`), the same call `RawJson::from_doc` makes. With the pool
 //! already parsed and retained, that costs 5.3 ms for the 873 KB payload against
 //! 1.6 ms to walk the same bytes as a `serde_json::Value`; neither figure
 //! includes acquiring the representation, so the two are comparable. Re-parsing
 //! first, 8.1 ms; acquiring a `RawJson` from the pool instead (`from_doc`),
 //! 11.4 ms — a one-time cost, after which re-emitting is the 14 µs splice. A
-//! caller holding a `dacodec`-native parsed form therefore loses by more than
+//! caller holding a `dacode-json`-native parsed form therefore loses by more than
 //! the ratio above, and quoting against the foreign tree is the conservative
 //! choice. The strawman objection — "you raced a generic serializer
 //! driving a foreign enum" — is what the `serde_json` row is for: same tree, same
@@ -72,7 +72,7 @@
 //!
 //! That row calls `serde_json::to_vec`, which allocates and reallocs from a
 //! 128-byte start to the final size — ~13 reallocations at 873 KB — while both
-//! `dacodec` rows reuse one buffer. It costs `serde_json` a few percent, which
+//! `dacode-json` rows reuse one buffer. It costs `serde_json` a few percent, which
 //! makes the quoted ratio a lower bound. The asymmetry is repo convention rather
 //! than a choice made here: `benches/structs.rs:295-309` times `vela` against a
 //! reused buffer and every contender through its own allocating API.
@@ -82,7 +82,7 @@
 //! enabling it in `[dev-dependencies]` would unify the feature into the
 //! optional `serde_json` dependency every other bench and test builds against.
 //! So the `serde_json` rows measure the re-encode path only, and the splice
-//! column is `dacodec`'s alone.
+//! column is `dacode-json`'s alone.
 //!
 //! The pool deserializer's capture (`de::from_doc`, canonical rather than
 //! byte-exact — `docs/RAWJSON.md` §4) is deliberately absent from the sweep: it
@@ -95,7 +95,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use serde::{Deserialize, Serialize};
 use std::hint::black_box;
 use std::sync::OnceLock;
-use dacodec::{corpus, ser, RawJson};
+use dacode_json::{corpus, ser, RawJson};
 
 const SEED: u64 = 0xA7C5;
 
@@ -223,7 +223,7 @@ fn build_case(features: usize) -> Case {
 /// Serialize one event with its payload spliced in — the producer's path, and
 /// the bytes every fidelity check and every capture row is written against.
 fn splice_wire(raw: &RawJson) -> String {
-    dacodec::to_string(&Spliced {
+    dacode_json::to_string(&Spliced {
         seq: SEQ,
         ts: TS,
         kind: KIND,
@@ -270,7 +270,7 @@ fn check_padded_capture() {
         "padded: the envelope or the splice moved"
     );
 
-    let captured: Captured = dacodec::from_slice(wire.as_bytes()).expect("wire parses");
+    let captured: Captured = dacode_json::from_slice(wire.as_bytes()).expect("wire parses");
     assert_eq!(
         captured.args.get(),
         raw.get(),
@@ -348,20 +348,20 @@ fn check_fidelity(name: &str, raw: &RawJson, dom: &serde_json::Value, wire: &str
     // turns; the envelope assertion above is what catches that, and
     // `check_padded_capture` is what makes it catchable at all.
     for turn in 0..8 {
-        let again = dacodec::to_string(&event).expect("splice serializes");
+        let again = dacode_json::to_string(&event).expect("splice serializes");
         assert_eq!(again, wire, "{name}: splice is not byte-stable on turn {turn}");
     }
 
     // Capture the wire, splice it back out: a fixed point, byte-exact. This is
     // the positional deserializer's path (`src/direct.rs`), the one callers get
     // from `from_str`/`from_slice`.
-    let captured: Captured = dacodec::from_str(wire).expect("wire parses");
+    let captured: Captured = dacode_json::from_str(wire).expect("wire parses");
     assert_eq!(
         captured.args.get(),
         raw.get(),
         "{name}: capture was not byte-exact"
     );
-    let respliced = dacodec::to_string(&Spliced {
+    let respliced = dacode_json::to_string(&Spliced {
         seq: captured.seq,
         ts: captured.ts,
         kind: &captured.kind,
@@ -383,11 +383,11 @@ fn check_fidelity(name: &str, raw: &RawJson, dom: &serde_json::Value, wire: &str
         kind: KIND,
         args: dom,
     };
-    let ours = dacodec::to_string(&reencoded).expect("tree serializes");
+    let ours = dacode_json::to_string(&reencoded).expect("tree serializes");
     assert_eq!(
         ours.len(),
         wire.len(),
-        "{name}: dacodec re-encode changed the byte count"
+        "{name}: dacode-json re-encode changed the byte count"
     );
     let theirs = serde_json::to_vec(&reencoded).expect("tree serializes");
     assert_eq!(
@@ -420,7 +420,7 @@ fn check_fidelity(name: &str, raw: &RawJson, dom: &serde_json::Value, wire: &str
 
 /// Serializing an event whose opaque field is text versus one whose opaque
 /// field is a tree. Same envelope, same payload, same output size — three rows,
-/// because the tree gets re-encoded by both serializers and only `dacodec` can
+/// because the tree gets re-encoded by both serializers and only `dacode-json` can
 /// splice. Quote against `serde_json_dom`, the stronger of the two opponents.
 fn bench_splice_serialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("rawjson_splice_ser");
@@ -442,12 +442,12 @@ fn bench_splice_serialize(c: &mut Criterion) {
             args: &case.dom,
         };
 
-        // Both `dacodec` rows write into one reused buffer: a producer
+        // Both `dacode-json` rows write into one reused buffer: a producer
         // re-emitting its history every turn keeps one, and
         // `benches/structs.rs::bench_serialize` times the same way.
         let mut buf = Vec::with_capacity(case.wire.len() + 64);
         group.bench_with_input(
-            BenchmarkId::new("dacodec_splice", &case.name),
+            BenchmarkId::new("dacode_json_splice", &case.name),
             &spliced,
             |b, event| {
                 b.iter(|| {
@@ -459,7 +459,7 @@ fn bench_splice_serialize(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("dacodec_dom", &case.name),
+            BenchmarkId::new("dacode_json_dom", &case.name),
             &reencoded,
             |b, event| {
                 b.iter(|| {
@@ -471,7 +471,7 @@ fn bench_splice_serialize(c: &mut Criterion) {
         );
 
         // `serde_json` gets `to_vec`, not `to_writer`: its writer path goes
-        // through `io::Write` and is not the equivalent of `dacodec`'s, which
+        // through `io::Write` and is not the equivalent of `dacode-json`'s, which
         // takes a `Vec<u8>` directly. Same convention as `benches/structs.rs`.
         group.bench_with_input(
             BenchmarkId::new("serde_json_dom", &case.name),
@@ -490,10 +490,10 @@ fn bench_splice_serialize(c: &mut Criterion) {
 // =====================================================================
 
 /// The same wire bytes into three destinations — captured, parsed, ignored —
-/// on `dacodec`'s positional deserializer, with `serde_json` as the reference
+/// on `dacode-json`'s positional deserializer, with `serde_json` as the reference
 /// for the two of the three it can also do.
 ///
-/// `dacodec_raw` over `dacodec_ignored` is an **upper bound** on the price of
+/// `dacode_json_raw` over `dacode_json_ignored` is an **upper bound** on the price of
 /// keeping the payload, not the price. The floor row walks past the bytes and
 /// keeps nothing; capture walks them and then pays for them a second time. At
 /// 853 KB the delta is ~3.2 ms (5.2 against 2.0, `tools/isolate.sh`), and it
@@ -526,9 +526,9 @@ fn bench_capture_deserialize(c: &mut Criterion) {
         let wire = case.wire.as_bytes();
         group.throughput(Throughput::Bytes(wire.len() as u64));
 
-        group.bench_with_input(BenchmarkId::new("dacodec_raw", &case.name), wire, |b, wire| {
+        group.bench_with_input(BenchmarkId::new("dacode_json_raw", &case.name), wire, |b, wire| {
             b.iter(|| {
-                let e: Captured = dacodec::from_slice(black_box(wire)).expect("de");
+                let e: Captured = dacode_json::from_slice(black_box(wire)).expect("de");
                 // Keep the whole event live: the capture is an owned copy, and
                 // black-boxing only its length would let the copy go.
                 let kept = black_box(&e);
@@ -536,16 +536,16 @@ fn bench_capture_deserialize(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("dacodec_dom", &case.name), wire, |b, wire| {
+        group.bench_with_input(BenchmarkId::new("dacode_json_dom", &case.name), wire, |b, wire| {
             b.iter(|| {
-                let e: Parsed = dacodec::from_slice(black_box(wire)).expect("de");
+                let e: Parsed = dacode_json::from_slice(black_box(wire)).expect("de");
                 black_box(keep_parsed(&e))
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("dacodec_ignored", &case.name), wire, |b, wire| {
+        group.bench_with_input(BenchmarkId::new("dacode_json_ignored", &case.name), wire, |b, wire| {
             b.iter(|| {
-                let e: PrefixOnly = dacodec::from_slice(black_box(wire)).expect("de");
+                let e: PrefixOnly = dacode_json::from_slice(black_box(wire)).expect("de");
                 black_box(e.seq as usize + e.ts as usize + e.kind.len())
             });
         });

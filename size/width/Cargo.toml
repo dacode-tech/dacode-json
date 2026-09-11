@@ -10,7 +10,7 @@ publish = false
 crate-type = ["staticlib"]
 
 [dependencies]
-dacodec = { path = "../..", default-features = false }
+dacode-json = { path = "../..", default-features = false }
 
 [profile.release]
 opt-level = "z"

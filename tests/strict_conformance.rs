@@ -7,8 +7,8 @@
 // 3.14 is test data, not an attempt at PI.
 #![allow(clippy::approx_constant)]
 
-use dacodec::strict::{self, ErrorKind, StrictParser};
-use dacodec::{corpus, Type};
+use dacode_json::strict::{self, ErrorKind, StrictParser};
+use dacode_json::{corpus, Type};
 
 #[track_caller]
 fn accept(src: &str) {
@@ -233,7 +233,7 @@ fn strings_still_borrow() {
 // ---------------------------------------------------------------------
 
 /// Compare the strict parser's tree with `serde_json::Value`, node by node.
-fn same(v: &dacodec::Value<'_>, j: &serde_json::Value) -> Result<(), String> {
+fn same(v: &dacode_json::Value<'_>, j: &serde_json::Value) -> Result<(), String> {
     match (v.typ(), j) {
         (Type::Null, serde_json::Value::Null) => Ok(()),
         (Type::Bool, serde_json::Value::Bool(b)) => {
@@ -271,7 +271,7 @@ fn same(v: &dacodec::Value<'_>, j: &serde_json::Value) -> Result<(), String> {
                 return Err(format!("object len {} != {}", v.len(), map.len()));
             }
             for (k, val) in v.entries() {
-                let Some(key) = dacodec::unescape::unescape(k) else {
+                let Some(key) = dacode_json::unescape::unescape(k) else {
                     return Err(format!("bad key {:?}", String::from_utf8_lossy(k)));
                 };
                 let Some(jv) = map.get(key.as_ref()) else {

@@ -8,8 +8,8 @@
 //! inputs, because those boundaries are exactly where the carry logic
 //! breaks.
 
-use dacodec::corpus;
-use dacodec::scan::{scan, Scanner};
+use dacode_json::corpus;
+use dacode_json::scan::{scan, Scanner};
 
 const SCANNERS: [Scanner; 2] = [Scanner::Branchless, Scanner::Branchless2x];
 

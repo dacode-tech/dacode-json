@@ -467,7 +467,7 @@ coming back as `1e19`; the streaming parser keeps it as an exact `u64`, as
 `serde_json` does. Pinned by
 `tests/stream.rs::keeps_integer_precision_that_the_pool_loses`.
 
-`dacodec::from_slice` now uses this path. `Parser`/`Doc` still build a pool,
+`dacode_json::from_slice` now uses this path. `Parser`/`Doc` still build a pool,
 which is the right structure for querying rather than converting.
 
 ### Removing Stage 1 as well: `src/direct.rs`
@@ -511,7 +511,7 @@ nothing but the output.
 for building a DOM, where the index is walked once and the result is kept —
 and a genuine loss for filling a struct, where it is a second pass over the
 document and 22 MiB of memory in service of delimiters that a byte cursor
-finds as it goes. `dacodec::from_slice` uses `direct`.
+finds as it goes. `dacode_json::from_slice` uses `direct`.
 
 One thing the index still buys that `direct` cannot: an exact
 `SeqAccess::size_hint`, because counting elements is an index walk. That
@@ -689,8 +689,8 @@ Symmetric: neither side gets host-specific tuning. Adding
 
 | 4 MiB owned | default | `target-cpu=native` |
 |---|---|---|
-| `dacodec` ascii | 366 | 335 |
-| `dacodec` direct | 331 | 324 |
+| `dacode-json` ascii | 366 | 335 |
+| `dacode-json` direct | 331 | 324 |
 | serde_json | 293 | 288 |
 | sonic-rs | 384 | 368 |
 

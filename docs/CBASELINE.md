@@ -206,7 +206,7 @@ a process. Any benchmark comparing across an FFI boundary should isolate.
 ## Current standing, after the streaming rewrite
 
 The tables above measure the pool parser, which is no longer what
-`dacodec::from_slice` uses. Re-measured with `src/direct.rs`:
+`dacode_json::from_slice` uses. Re-measured with `src/direct.rs`:
 
 ### Sum one integer field across every record, 4 MiB
 
@@ -216,7 +216,7 @@ Parse plus read, which is the thing a caller actually does.
 |---|---|
 | simdjson On-Demand (C++) | **1 561** |
 | yyjson (C) | ~977 |
-| **dacodec `direct`** | **659** |
+| **dacode-json `direct`** | **659** |
 | pool, non-validating | 591 |
 | serde_json into structs | 535 |
 | pool, validating | 365 |
@@ -302,11 +302,11 @@ Sum one integer field across 4 MiB of records:
 |---|---|
 | simdjson On-Demand (C++) | **1 608** |
 | yyjson (C) | ~1 010 |
-| **`dacodec::pull`** | **778** |
-| `dacodec::direct` (serde) | 656 |
+| **`dacode_json::pull`** | **778** |
+| `dacode_json::direct` (serde) | 656 |
 | pool, non-validating | 589 |
 | serde_json into structs | 538 |
-| `dacodec::stream` (indexed) | 467 |
+| `dacode_json::stream` (indexed) | 467 |
 | serde_json into `Value` | 122 |
 
 That is +19% over the serde path and closes the gap to simdjson from 2.4x

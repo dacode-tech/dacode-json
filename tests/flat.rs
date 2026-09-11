@@ -6,9 +6,9 @@
 //! *is* the data structure — so every accessor is fuzzed against random
 //! and mutated input and must return `None`, never panic.
 
-use dacodec::flat::{self, Builder, Error, View, HEADER, MAGIC};
-use dacodec::strict::StrictParser;
-use dacodec::{corpus, Type};
+use dacode_json::flat::{self, Builder, Error, View, HEADER, MAGIC};
+use dacode_json::strict::StrictParser;
+use dacode_json::{corpus, Type};
 
 fn encode(json: &str) -> Vec<u8> {
     let mut p = StrictParser::new();

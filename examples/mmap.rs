@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Nothing here allocates. `Raw` borrows out of the mapping, so a field
     // is a pointer and a length into a page the kernel faulted in.
-    dacodec::pull::for_each_object(&data, |fields| {
+    dacode_json::pull::for_each_object(&data, |fields| {
         records += 1;
         while let Some((key, value)) = fields.next()? {
             if key == b"score" {

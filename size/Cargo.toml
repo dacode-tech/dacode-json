@@ -12,7 +12,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-dacodec = { path = "..", default-features = false }
+dacode-json = { path = "..", default-features = false }
 serde = { version = "1", optional = true, default-features = false, features = [
     "derive",
     "alloc",
@@ -23,13 +23,13 @@ serde_json = { version = "1", optional = true, default-features = false, feature
 
 [features]
 # One feature per contender. Each is built in its own `cargo build`
-# invocation, because feature unification is per-invocation: `dacodec`
+# invocation, because feature unification is per-invocation: `dacode-json`
 # cannot be both `--no-default-features` and `--features serde` in one.
 default = []
 pull = []
 write = []
 flatread = []
-direct = ["dacodec/serde", "dep:serde"]
+direct = ["dacode-json/serde", "dep:serde"]
 serdejson = ["dep:serde_json", "dep:serde"]
 
 [[bin]]

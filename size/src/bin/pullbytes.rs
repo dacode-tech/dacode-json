@@ -1,4 +1,4 @@
-//! `dacodec::pull` stopping at `Raw::bytes` — a diagnostic, not a
+//! `dacode_json::pull` stopping at `Raw::bytes` — a diagnostic, not a
 //! contender.
 //!
 //! Identical to `pull.rs` except that it never converts the field, so it
@@ -15,7 +15,7 @@ use size::{finish, input};
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let mut total = 0i64;
-    let _ = dacodec::pull::select(input(), &[b"score"], |got| {
+    let _ = dacode_json::pull::select(input(), &[b"score"], |got| {
         total += got[0].map(|v| v.bytes().len() as i64).unwrap_or(0);
         Ok(())
     });

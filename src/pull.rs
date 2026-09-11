@@ -11,11 +11,11 @@
 //! you do not ask for, and it **allocates nothing at all**.
 //!
 //! ```
-//! # fn main() -> Result<(), dacodec::stream::Error> {
+//! # fn main() -> Result<(), dacode_json::stream::Error> {
 //! let src = br#"[{"id":1,"score":40,"junk":[1,2,3]},{"id":2,"score":2,"junk":{}}]"#;
 //!
 //! let mut total = 0i64;
-//! dacodec::pull::for_each_object(src, |fields| {
+//! dacode_json::pull::for_each_object(src, |fields| {
 //!     while let Some((key, val)) = fields.next()? {
 //!         if key == b"score" {
 //!             total += val.as_i64().unwrap_or(0);
@@ -146,8 +146,8 @@ impl<'de> Raw<'de> {
     /// parser.
     ///
     /// ```
-    /// # fn main() -> Result<(), dacodec::stream::Error> {
-    /// dacodec::pull::select(br#"[{"t":-40,"h":81}]"#, &[b"t", b"h"], |got| {
+    /// # fn main() -> Result<(), dacode_json::stream::Error> {
+    /// dacode_json::pull::select(br#"[{"t":-40,"h":81}]"#, &[b"t", b"h"], |got| {
     ///     assert_eq!(got[0].and_then(|v| v.as_int::<i16>()), Some(-40));
     ///     assert_eq!(got[1].and_then(|v| v.as_int::<u8>()), Some(81));
     ///     Ok(())
@@ -181,8 +181,8 @@ impl<'de> Raw<'de> {
     /// value multiplied by `10^scale`:
     ///
     /// ```
-    /// # fn main() -> Result<(), dacodec::stream::Error> {
-    /// dacodec::pull::select(br#"[{"c":-12.34,"v":3.9}]"#, &[b"c", b"v"], |got| {
+    /// # fn main() -> Result<(), dacode_json::stream::Error> {
+    /// dacode_json::pull::select(br#"[{"c":-12.34,"v":3.9}]"#, &[b"c", b"v"], |got| {
     ///     // -12.34 °C in hundredths, 3.9 V in millivolts.
     ///     assert_eq!(got[0].and_then(|v| v.as_fixed::<i32>(2)), Some(-1234));
     ///     assert_eq!(got[1].and_then(|v| v.as_fixed::<i32>(3)), Some(3900));
@@ -640,10 +640,10 @@ where
 /// Scanning stops for a record as soon as every named field is found.
 ///
 /// ```
-/// # fn main() -> Result<(), dacodec::stream::Error> {
+/// # fn main() -> Result<(), dacode_json::stream::Error> {
 /// let src = br#"[{"a":1,"skip":[1,2],"b":"x"},{"b":"y","a":2}]"#;
 /// let mut out = Vec::new();
-/// dacodec::pull::select(src, &[b"a", b"b"], |got| {
+/// dacode_json::pull::select(src, &[b"a", b"b"], |got| {
 ///     out.push((
 ///         got[0].and_then(|v| v.as_i64()),
 ///         got[1].and_then(|v| v.as_str()).map(|s| s.into_owned()),
@@ -694,9 +694,9 @@ where
 /// named.
 ///
 /// ```
-/// # fn main() -> Result<(), dacodec::stream::Error> {
+/// # fn main() -> Result<(), dacode_json::stream::Error> {
 /// let src = br#"{"host":"edge","port":8080,"extra":{"skip":[1,2]}}"#;
-/// let [host, port] = dacodec::pull::select_object(src, &[b"host", b"port"])?;
+/// let [host, port] = dacode_json::pull::select_object(src, &[b"host", b"port"])?;
 /// assert_eq!(host.and_then(|v| v.as_borrowed_str()), Some("edge"));
 /// assert_eq!(port.and_then(|v| v.as_int::<u16>()), Some(8080));
 /// # Ok(()) }
@@ -730,10 +730,10 @@ pub fn select_object<'de, const N: usize>(
 /// [`offset`](Raw::offset), which is what a caller needs to say *where*.
 ///
 /// ```
-/// # fn main() -> Result<(), dacodec::stream::Error> {
+/// # fn main() -> Result<(), dacode_json::stream::Error> {
 /// let src = br#"{"prot": 8080, "host": "edge"}"#;
 /// let mut typo = None;
-/// let [host] = dacodec::pull::select_object_with(src, &[b"host"], |key, val| {
+/// let [host] = dacode_json::pull::select_object_with(src, &[b"host"], |key, val| {
 ///     typo = Some((key, val.offset()));
 /// })?;
 /// assert_eq!(host.and_then(|v| v.as_borrowed_str()), Some("edge"));

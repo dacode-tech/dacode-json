@@ -15,7 +15,7 @@ pub extern "C" fn _start() -> ! {
     let mut a = 0i16;
     let mut b = 0u8;
     let mut c = 0i32;
-    let _ = dacodec::pull::select(input(), &[b"score", b"id"], |got| {
+    let _ = dacode_json::pull::select(input(), &[b"score", b"id"], |got| {
         a = a.wrapping_add(got[0].and_then(|v| v.as_int::<i16>()).unwrap_or(0));
         b = b.wrapping_add(got[1].and_then(|v| v.as_int::<u8>()).unwrap_or(0));
         c = c.wrapping_add(got[0].and_then(|v| v.as_int::<i32>()).unwrap_or(0));

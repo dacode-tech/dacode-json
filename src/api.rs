@@ -10,12 +10,12 @@
 //!
 //! let text = r#"{"name":"edge","port":8080,"tags":["a","b"]}"#;
 //!
-//! let cfg: Config = dacodec::from_str(text)?;
+//! let cfg: Config = dacode_json::from_str(text)?;
 //! assert_eq!(cfg.port, 8080);
 //!
-//! let back = dacodec::to_string(&cfg)?;
+//! let back = dacode_json::to_string(&cfg)?;
 //! assert_eq!(back, text);
-//! # Ok::<(), dacodec::Error>(())
+//! # Ok::<(), dacode_json::Error>(())
 //! ```
 //!
 //! Output is byte-identical to `serde_json`'s, which
@@ -32,10 +32,10 @@
 //! struct Row<'a> { #[serde(borrow)] name: &'a str }
 //!
 //! let text = r#"{"name":"alpha"}"#;
-//! let mut p = dacodec::Parser::new();
+//! let mut p = dacode_json::Parser::new();
 //! let row: Row<'_> = p.deserialize(text.as_bytes())?;
 //! assert_eq!(row.name, "alpha");
-//! # Ok::<(), dacodec::Error>(())
+//! # Ok::<(), dacode_json::Error>(())
 //! ```
 //!
 //! A borrowing type needs [`Parser`] rather than [`from_str`], because the
@@ -49,12 +49,12 @@
 //! comes from:
 //!
 //! ```
-//! let mut p = dacodec::Parser::new();
+//! let mut p = dacode_json::Parser::new();
 //! for line in [r#"{"a":1}"#, r#"{"a":2}"#] {
 //!     let doc = p.parse(line.as_bytes())?;
 //!     assert!(doc.root().get("a").is_some());
 //! }
-//! # Ok::<(), dacodec::Error>(())
+//! # Ok::<(), dacode_json::Error>(())
 //! ```
 
 use alloc::string::String;

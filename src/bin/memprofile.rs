@@ -51,15 +51,15 @@
 
 use std::env;
 use std::hint::black_box;
-use dacodec::memstat::{human, Snapshot};
-use dacodec::strict::StrictParser;
-use dacodec::{corpus, flat, Workspace};
+use dacode_json::memstat::{human, Snapshot};
+use dacode_json::strict::StrictParser;
+use dacode_json::{corpus, flat, Workspace};
 
 // Counting the Rust side needs a global allocator hook. It adds a couple of
 // relaxed atomics per allocation, which is why this lives in its own binary
 // and not in anything that gets timed.
 #[global_allocator]
-static ALLOC: dacodec::memstat::Counter = dacodec::memstat::Counter;
+static ALLOC: dacode_json::memstat::Counter = dacode_json::memstat::Counter;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Record {
@@ -92,7 +92,7 @@ struct RecordBoxed {
     tags: Box<[Box<str>]>,
 }
 
-dacodec::flat_struct! {
+dacode_json::flat_struct! {
     pub struct FlatRecord : FlatRecordFields {
         id: u64,
         age: u32,
@@ -352,7 +352,7 @@ fn selftest() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "cbench")]
     {
         let a = Snapshot::now();
-        let pool = dacodec::cbench::YyPool::new(N).ok_or("yyjson pool allocation failed")?;
+        let pool = dacode_json::cbench::YyPool::new(N).ok_or("yyjson pool allocation failed")?;
         let b = Snapshot::now();
         drop(pool);
         let c = Snapshot::now();
@@ -383,13 +383,13 @@ fn run(which: &str, src: &[u8]) -> Result<(Keep, String), Box<dyn std::error::Er
         // --- Vela tiers: navigation only, no persistent structure ---
         #[cfg(feature = "vela-compat")]
         "vela_tier1" => {
-            use dacodec::tiers::{tier1::Tier1, JsonTier};
+            use dacode_json::tiers::{tier1::Tier1, JsonTier};
             let n = Tier1::array_count(src);
             (Box::new(()), format!("elems={n}"))
         }
         #[cfg(feature = "vela-compat")]
         "vela_tier2_tape" => {
-            let mut b = dacodec::tiers::tier2::tape::TapeBuilder::new();
+            let mut b = dacode_json::tiers::tier2::tape::TapeBuilder::new();
             let n = b.build(src).len();
             (Box::new(b), format!("tape_entries={n}"))
         }
@@ -461,22 +461,22 @@ fn run(which: &str, src: &[u8]) -> Result<(Keep, String), Box<dyn std::error::Er
             (Box::new(v), format!("elems={n}"))
         }
         "direct_structs" => {
-            let v: Vec<Record> = dacodec::direct::from_slice(src)?;
+            let v: Vec<Record> = dacode_json::direct::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "direct_structs_boxed" => {
-            let v: Vec<RecordBoxed> = dacodec::direct::from_slice(src)?;
+            let v: Vec<RecordBoxed> = dacode_json::direct::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "stream_structs" => {
-            let v: Vec<Record> = dacodec::stream::from_slice(src)?;
+            let v: Vec<Record> = dacode_json::stream::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
         "stream_structs_boxed" => {
-            let v: Vec<RecordBoxed> = dacodec::stream::from_slice(src)?;
+            let v: Vec<RecordBoxed> = dacode_json::stream::from_slice(src)?;
             let n = v.len();
             (Box::new(v), format!("records={n}"))
         }
@@ -513,7 +513,7 @@ fn run(which: &str, src: &[u8]) -> Result<(Keep, String), Box<dyn std::error::Er
         // --- C libraries ---
         #[cfg(feature = "cbench")]
         "yyjson" => {
-            let doc = dacodec::cbench::YyDoc::parse(src).ok_or("yyjson rejected the corpus")?;
+            let doc = dacode_json::cbench::YyDoc::parse(src).ok_or("yyjson rejected the corpus")?;
             let n = doc.value_count();
             (Box::new(doc), format!("values={n}"))
         }
@@ -521,8 +521,8 @@ fn run(which: &str, src: &[u8]) -> Result<(Keep, String), Box<dyn std::error::Er
         "simdjson_dom" => {
             // The parser retains its tape and string buffer, so what it
             // holds after a parse is its memory cost.
-            let padded = dacodec::cbench::Padded::new(src);
-            let n = dacodec::cbench::SimdJson::parse_dom(&padded);
+            let padded = dacode_json::cbench::Padded::new(src);
+            let n = dacode_json::cbench::SimdJson::parse_dom(&padded);
             (Box::new(padded), format!("bytes={n}"))
         }
 

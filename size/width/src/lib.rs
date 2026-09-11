@@ -8,7 +8,7 @@ macro_rules! probe {
         pub extern "C" fn $name(p: *const u8, n: usize) -> $t {
             let input = unsafe { core::slice::from_raw_parts(p, n) };
             let mut acc: $t = 0;
-            let _ = dacodec::pull::select(input, &[b"v"], |got| {
+            let _ = dacode_json::pull::select(input, &[b"v"], |got| {
                 acc = acc.wrapping_add(got[0].and_then(|v| v.as_int::<$t>()).unwrap_or(0));
                 Ok(())
             });
@@ -24,7 +24,7 @@ macro_rules! probe {
 pub extern "C" fn probe_none(p: *const u8, n: usize) -> i64 {
     let input = unsafe { core::slice::from_raw_parts(p, n) };
     let mut acc: i64 = 0;
-    let _ = dacodec::pull::select(input, &[b"v"], |got| {
+    let _ = dacode_json::pull::select(input, &[b"v"], |got| {
         acc = acc.wrapping_add(got[0].map(|v| v.bytes().len() as i64).unwrap_or(0));
         Ok(())
     });
@@ -41,7 +41,7 @@ pub extern "C" fn probe_none(p: *const u8, n: usize) -> i64 {
 pub extern "C" fn probe_as_i64(p: *const u8, n: usize) -> i64 {
     let input = unsafe { core::slice::from_raw_parts(p, n) };
     let mut acc: i64 = 0;
-    let _ = dacodec::pull::select(input, &[b"v"], |got| {
+    let _ = dacode_json::pull::select(input, &[b"v"], |got| {
         acc = acc.wrapping_add(got[0].and_then(|v| v.as_i64()).unwrap_or(0));
         Ok(())
     });

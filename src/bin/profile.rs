@@ -21,8 +21,8 @@
 
 use std::env;
 use std::hint::black_box;
-use dacodec::strict::StrictParser;
-use dacodec::{corpus, de, flat, ser, Workspace};
+use dacode_json::strict::StrictParser;
+use dacode_json::{corpus, de, flat, ser, Workspace};
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 struct Record {
@@ -89,19 +89,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match workload {
         "vela_scan" => {
-            let mut idx = dacodec::StructuralIndex::with_capacity(bytes.len() + 64);
+            let mut idx = dacode_json::StructuralIndex::with_capacity(bytes.len() + 64);
             for _ in 0..iters {
                 idx.clear();
-                dacodec::scan::scan_into(dacodec::Scanner::default(), bytes, &mut idx);
+                dacode_json::scan::scan_into(dacode_json::Scanner::default(), bytes, &mut idx);
                 black_box(idx.len());
             }
         }
         // Stage 2 alone: index pre-built and reused, so only the DOM
         // builder is sampled.
         "vela_stage2" => {
-            use dacodec::builder::{build_from_index, pool_capacity_for, Stack};
-            use dacodec::pool::Pool;
-            let si = dacodec::scan::scan(dacodec::Scanner::default(), bytes);
+            use dacode_json::builder::{build_from_index, pool_capacity_for, Stack};
+            use dacode_json::pool::Pool;
+            let si = dacode_json::scan::scan(dacode_json::Scanner::default(), bytes);
             let mut pool = Pool::with_capacity(pool_capacity_for(si.len()));
             let mut stack = Stack::new();
             for _ in 0..iters {
@@ -131,10 +131,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         "stream_de" => {
-            let mut idx = dacodec::stream::Index::default();
+            let mut idx = dacode_json::stream::Index::default();
             idx.reserve_for(bytes.len());
             for _ in 0..iters {
-                let v: Vec<Record> = dacodec::stream::from_slice_with(&mut idx, bytes)?;
+                let v: Vec<Record> = dacode_json::stream::from_slice_with(&mut idx, bytes)?;
                 black_box(v.len());
             }
         }
@@ -205,27 +205,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "cbench")]
         "yyjson" => {
             for _ in 0..iters {
-                black_box(dacodec::cbench::YyJson::parse(bytes));
+                black_box(dacode_json::cbench::YyJson::parse(bytes));
             }
         }
         #[cfg(feature = "cbench")]
         "yyjson_sum" => {
             for _ in 0..iters {
-                black_box(dacodec::cbench::YyJson::sum_field(bytes, "score"));
+                black_box(dacode_json::cbench::YyJson::sum_field(bytes, "score"));
             }
         }
         #[cfg(feature = "cbench")]
         "simdjson_dom" => {
-            let p = dacodec::cbench::Padded::new(bytes);
+            let p = dacode_json::cbench::Padded::new(bytes);
             for _ in 0..iters {
-                black_box(dacodec::cbench::SimdJson::parse_dom(&p));
+                black_box(dacode_json::cbench::SimdJson::parse_dom(&p));
             }
         }
         #[cfg(feature = "cbench")]
         "simdjson_ondemand" => {
-            let p = dacodec::cbench::Padded::new(bytes);
+            let p = dacode_json::cbench::Padded::new(bytes);
             for _ in 0..iters {
-                black_box(dacodec::cbench::SimdJson::sum_field(&p, "score"));
+                black_box(dacode_json::cbench::SimdJson::sum_field(&p, "score"));
             }
         }
 

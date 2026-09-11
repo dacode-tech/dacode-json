@@ -4,13 +4,13 @@
 //! so it is verified exhaustively rather than by sampling: all 256 byte
 //! values, and all six scanners against the scalar oracle.
 
-use dacodec::corpus;
-use dacodec::scan::branchless::{classify, classify_scalar, Classified};
-use dacodec::scan::table::{
+use dacode_json::corpus;
+use dacode_json::scan::branchless::{classify, classify_scalar, Classified};
+use dacode_json::scan::table::{
     class_of, classify_hybrid, classify_lut256, classify_shuffle, CLASS_TABLE, HI_TABLE, LO_TABLE,
     M_BACKSLASH, M_QUOTE, M_STRUCTURAL, STRUCT_HI, STRUCT_LO,
 };
-use dacodec::scan::{scan, Scanner};
+use dacode_json::scan::{scan, Scanner};
 
 /// The eight bytes JSON Stage 1 cares about, and nothing else.
 fn expected_class(b: u8) -> u8 {

@@ -1,6 +1,6 @@
 //! An owned raw JSON value that splices into output verbatim.
 //!
-//! This is `dacodec`'s counterpart of `serde_json`'s `RawValue`: a JSON
+//! This is `dacode-json`'s counterpart of `serde_json`'s `RawValue`: a JSON
 //! document carried as text and written back out **byte-for-byte**, with no
 //! re-escaping, no re-encoding and no key reordering. It exists for the case
 //! where a value parsed out of one document must be embedded in another
@@ -35,7 +35,7 @@
 //! # Example
 //!
 //! ```
-//! use dacodec::RawJson;
+//! use dacode_json::RawJson;
 //! use serde::{Deserialize, Serialize};
 //!
 //! #[derive(Serialize, Deserialize)]
@@ -50,10 +50,10 @@
 //! };
 //! // `args` is spliced in verbatim — not escaped into a string.
 //! assert_eq!(
-//!     dacodec::to_string(&e)?,
+//!     dacode_json::to_string(&e)?,
 //!     r#"{"name":"edit","args":{"path":"a.rs","line":42}}"#
 //! );
-//! # Ok::<(), dacodec::Error>(())
+//! # Ok::<(), dacode_json::Error>(())
 //! ```
 
 use alloc::boxed::Box;
@@ -67,7 +67,7 @@ use serde::ser::{Serialize, SerializeStruct, Serializer};
 ///
 /// A name no real schema would use, so the special case cannot collide with a
 /// genuine struct. Mirrors `serde_json`'s private `RawValue` token.
-pub const TOKEN: &str = "$dacodec::private::RawJson";
+pub const TOKEN: &str = "$dacode_json::private::RawJson";
 
 /// An owned, validated JSON document that serialises by splicing its text
 /// verbatim into the output.
@@ -160,7 +160,7 @@ impl Serialize for RawJson {
     where
         S: Serializer,
     {
-        // The sentinel struct is the signal: `dacodec`'s serializer recognises
+        // The sentinel struct is the signal: `dacode-json`'s serializer recognises
         // `TOKEN` and writes the single field's text verbatim instead of as a
         // quoted string. A foreign serializer falls back to emitting the
         // sentinel object, exactly as `serde_json` does.
@@ -188,7 +188,7 @@ impl<'de> Visitor<'de> for RawJsonVisitor {
         formatter.write_str("a JSON value to capture verbatim")
     }
 
-    // `dacodec`'s deserializer special-cases `TOKEN` in
+    // `dacode-json`'s deserializer special-cases `TOKEN` in
     // `deserialize_newtype_struct` and hands the canonical text back through
     // `visit_string`/`visit_str`.
     fn visit_str<E>(self, v: &str) -> Result<RawJson, E>

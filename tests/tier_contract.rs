@@ -10,8 +10,8 @@
 //! ways. Each of those is pinned down below rather than glossed over.
 
 use std::collections::BTreeSet;
-use dacodec::corpus;
-use dacodec::tiers::{
+use dacode_json::corpus;
+use dacode_json::tiers::{
     tier0::Tier0,
     tier1::{Pairs, Tier1},
     tier2::Tier2,
@@ -303,7 +303,7 @@ fn navigation_matches_serde_json() {
                 // decoded keys and looking them up raw would compare the
                 // wrong things.
                 for (raw_key, raw_val) in Pairs::new(src) {
-                    let decoded = dacodec::unescape::unescape(raw_key)
+                    let decoded = dacode_json::unescape::unescape(raw_key)
                         .expect("key is valid UTF-8 with valid escapes");
 
                     let want = map

@@ -37,10 +37,10 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
-use dacodec::cbench::{Padded, SimdJson, YyJson, YyPool};
-use dacodec::corpus;
-use dacodec::strict::StrictParser;
-use dacodec::Workspace;
+use dacode_json::cbench::{Padded, SimdJson, YyJson, YyPool};
+use dacode_json::corpus;
+use dacode_json::strict::StrictParser;
+use dacode_json::Workspace;
 
 const SEED: u64 = 0x2C0;
 
@@ -282,10 +282,10 @@ fn bench_sum_field(c: &mut Criterion) {
             score: i64,
         }
 
-        group.bench_with_input(BenchmarkId::new("dacodec_direct", label), src, |b, src| {
+        group.bench_with_input(BenchmarkId::new("dacode_json_direct", label), src, |b, src| {
             b.iter(|| {
                 let rows: Vec<Score> =
-                    dacodec::direct::from_slice_borrowed(black_box(src)).expect("valid");
+                    dacode_json::direct::from_slice_borrowed(black_box(src)).expect("valid");
                 let sum: i64 = rows.iter().map(|r| r.score).sum();
                 black_box(sum)
             });
@@ -295,12 +295,12 @@ fn bench_sum_field(c: &mut Criterion) {
         // rather than byte scanning, which should pay when most of the
         // document is skipped - this is the shape simdjson On-Demand wins
         // on, so it is the one worth testing.
-        group.bench_with_input(BenchmarkId::new("dacodec_stream", label), src, |b, src| {
-            let mut idx = dacodec::stream::Index::default();
+        group.bench_with_input(BenchmarkId::new("dacode_json_stream", label), src, |b, src| {
+            let mut idx = dacode_json::stream::Index::default();
             idx.reserve_estimated(src.len());
             b.iter(|| {
                 let rows: Vec<Score> =
-                    dacodec::stream::from_slice_with(&mut idx, black_box(src)).expect("valid");
+                    dacode_json::stream::from_slice_with(&mut idx, black_box(src)).expect("valid");
                 let sum: i64 = rows.iter().map(|r| r.score).sum();
                 black_box(sum)
             });
@@ -308,10 +308,10 @@ fn bench_sum_field(c: &mut Criterion) {
 
         // On-demand: seek the one field, skip the rest of each record
         // without enumerating it. Allocates nothing.
-        group.bench_with_input(BenchmarkId::new("dacodec_pull", label), src, |b, src| {
+        group.bench_with_input(BenchmarkId::new("dacode_json_pull", label), src, |b, src| {
             b.iter(|| {
                 let mut sum = 0i64;
-                dacodec::pull::select(black_box(src), &[b"score"], |got| {
+                dacode_json::pull::select(black_box(src), &[b"score"], |got| {
                     sum += got[0].and_then(|v| v.as_i64()).unwrap_or(0);
                     Ok(())
                 })
@@ -367,10 +367,10 @@ fn bench_extract_all(c: &mut Criterion) {
                 for (k, v) in rec.entries() {
                     acc += k.len();
                     acc += match v.typ() {
-                        dacodec::Type::String => v.as_str().map_or(0, |s| s.len()),
-                        dacodec::Type::Number => v.as_i64().unwrap_or(0) as usize,
-                        dacodec::Type::Bool => usize::from(v.as_bool() == Some(true)),
-                        dacodec::Type::Array => v.elements().count(),
+                        dacode_json::Type::String => v.as_str().map_or(0, |s| s.len()),
+                        dacode_json::Type::Number => v.as_i64().unwrap_or(0) as usize,
+                        dacode_json::Type::Bool => usize::from(v.as_bool() == Some(true)),
+                        dacode_json::Type::Array => v.elements().count(),
                         _ => 0,
                     };
                 }
@@ -425,10 +425,10 @@ fn bench_first_field(c: &mut Criterion) {
 
     // For scale: the zero-copy format from docs/ZEROCOPY.md.
     let mut p = StrictParser::new();
-    let flatbuf = dacodec::flat::encode(p.parse(src).expect("valid")).expect("encode");
+    let flatbuf = dacode_json::flat::encode(p.parse(src).expect("valid")).expect("encode");
     group.bench_function("jsonflat", |b| {
         b.iter(|| {
-            let v = dacodec::flat::View::new(black_box(&flatbuf)).expect("view");
+            let v = dacode_json::flat::View::new(black_box(&flatbuf)).expect("view");
             black_box(
                 v.root()
                     .at(0)
@@ -503,9 +503,9 @@ fn bench_roundtrip(c: &mut Criterion) {
     let mut out = Vec::with_capacity(src.len() + 64);
     group.bench_function("vela_strict_serde", |b| {
         b.iter(|| {
-            let v: Vec<Record> = dacodec::de::from_slice(black_box(src)).expect("de");
+            let v: Vec<Record> = dacode_json::de::from_slice(black_box(src)).expect("de");
             out.clear();
-            dacodec::ser::to_writer(&mut out, &v).expect("ser");
+            dacode_json::ser::to_writer(&mut out, &v).expect("ser");
             black_box(out.len())
         });
     });

@@ -23,7 +23,7 @@ const CONFIG: &str = r#"{
 }"#;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut p = dacodec::Parser::new();
+    let mut p = dacode_json::Parser::new();
     let doc = p.parse(CONFIG.as_bytes())?;
     let root = doc.root();
 
@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The buffers are allocated once and reset, so a steady-state parse
     // does not allocate. The borrow checker enforces that the previous
     // document is dropped before the next parse.
-    let mut p = dacodec::Parser::with_capacity(4096);
+    let mut p = dacode_json::Parser::with_capacity(4096);
     let mut total = 0i64;
     for src in [r#"{"n":1}"#, r#"{"n":2}"#, r#"{"n":39}"#] {
         let doc = p.parse(src.as_bytes())?;
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Validate without keeping anything ---------------------------
     for src in [r#"{"ok":true}"#, r#"{"bad":}"#] {
-        match dacodec::validate(src.as_bytes()) {
+        match dacode_json::validate(src.as_bytes()) {
             Ok(()) => println!("valid              {src}"),
             Err(e) => println!("invalid            {src}  ({e})"),
         }

@@ -48,34 +48,34 @@ const fn send_sync_static<T: Send + Sync + 'static>() {}
 #[test]
 fn public_types_have_the_documented_auto_traits() {
     // --- owned: Send + Sync + 'static ---------------------------------
-    send_sync_static::<dacodec::Parser>();
-    send_sync_static::<dacodec::Workspace>();
-    send_sync_static::<dacodec::Pool>();
-    send_sync_static::<dacodec::Node>();
-    send_sync_static::<dacodec::StructuralIndex>();
-    send_sync_static::<dacodec::Scanner>();
-    send_sync_static::<dacodec::Type>();
-    send_sync_static::<dacodec::strict::StrictParser>();
-    send_sync_static::<dacodec::strict::Options>();
-    send_sync_static::<dacodec::builder::Stack>();
-    send_sync_static::<dacodec::flat::Builder>();
-    send_sync_static::<dacodec::flat::Intern>();
-    send_sync_static::<dacodec::ser::Options>();
-    send_sync_static::<dacodec::pull::Kind>();
+    send_sync_static::<dacode_json::Parser>();
+    send_sync_static::<dacode_json::Workspace>();
+    send_sync_static::<dacode_json::Pool>();
+    send_sync_static::<dacode_json::Node>();
+    send_sync_static::<dacode_json::StructuralIndex>();
+    send_sync_static::<dacode_json::Scanner>();
+    send_sync_static::<dacode_json::Type>();
+    send_sync_static::<dacode_json::strict::StrictParser>();
+    send_sync_static::<dacode_json::strict::Options>();
+    send_sync_static::<dacode_json::builder::Stack>();
+    send_sync_static::<dacode_json::flat::Builder>();
+    send_sync_static::<dacode_json::flat::Intern>();
+    send_sync_static::<dacode_json::ser::Options>();
+    send_sync_static::<dacode_json::pull::Kind>();
 
     // Errors especially: they get returned across channels and collected
     // into aggregate reports. `stream::Error` is the one that used to
     // hold a `String` and now holds a `&'static str` or a `Box<str>` —
     // both fine here, which is worth pinning since that change was made
     // for code size and not for this.
-    send_sync_static::<dacodec::Error>();
-    send_sync_static::<dacodec::stream::Error>();
-    send_sync_static::<dacodec::strict::Error>();
-    send_sync_static::<dacodec::strict::ErrorKind>();
-    send_sync_static::<dacodec::de::Error>();
-    send_sync_static::<dacodec::ser::Error>();
-    send_sync_static::<dacodec::write::Error>();
-    send_sync_static::<dacodec::flat::Error>();
+    send_sync_static::<dacode_json::Error>();
+    send_sync_static::<dacode_json::stream::Error>();
+    send_sync_static::<dacode_json::strict::Error>();
+    send_sync_static::<dacode_json::strict::ErrorKind>();
+    send_sync_static::<dacode_json::de::Error>();
+    send_sync_static::<dacode_json::ser::Error>();
+    send_sync_static::<dacode_json::write::Error>();
+    send_sync_static::<dacode_json::flat::Error>();
 
     // A generic writer must not inherit its schema marker's auto traits.
     // `TypedWriter<T>` stores `PhantomData<fn() -> T>` rather than a `T`,
@@ -85,23 +85,23 @@ fn public_types_have_the_documented_auto_traits() {
     send_sync::<core::marker::PhantomData<fn() -> Hostile>>();
 
     // --- borrowing views ----------------------------------------------
-    send_sync::<dacodec::Document<'_>>();
-    send_sync::<dacodec::ValueRef<'_>>();
-    send_sync::<dacodec::pull::Raw<'_>>();
-    send_sync::<dacodec::pull::Fields<'_, '_>>();
-    send_sync::<dacodec::flat::View<'_>>();
-    send_sync::<dacodec::flat::Ref<'_>>();
-    send_sync::<dacodec::flat::Elements<'_>>();
-    send_sync::<dacodec::flat::Entries<'_>>();
-    send_sync::<dacodec::de::Deserializer<'_>>();
+    send_sync::<dacode_json::Document<'_>>();
+    send_sync::<dacode_json::ValueRef<'_>>();
+    send_sync::<dacode_json::pull::Raw<'_>>();
+    send_sync::<dacode_json::pull::Fields<'_, '_>>();
+    send_sync::<dacode_json::flat::View<'_>>();
+    send_sync::<dacode_json::flat::Ref<'_>>();
+    send_sync::<dacode_json::flat::Elements<'_>>();
+    send_sync::<dacode_json::flat::Entries<'_>>();
+    send_sync::<dacode_json::de::Deserializer<'_>>();
 
     // --- exclusive borrows are `Sync` as well -------------------------
     //
     // `&mut T` is `Sync` when `T` is. Sharing a `&&mut [u8]` grants only
     // reads, so there is nothing to race. This is the assertion the first
     // draft got backwards.
-    send_sync::<dacodec::write::Writer<'_>>();
-    send_sync::<dacodec::ser::Serializer<'_>>();
+    send_sync::<dacode_json::write::Writer<'_>>();
+    send_sync::<dacode_json::ser::Serializer<'_>>();
 }
 
 // =====================================================================
@@ -128,7 +128,7 @@ struct Rec {
 /// than finish in sequence.
 #[test]
 fn every_entry_point_agrees_under_contention() {
-    let want: Vec<Rec> = dacodec::from_str(DOC).expect("baseline");
+    let want: Vec<Rec> = dacode_json::from_str(DOC).expect("baseline");
     let want = Arc::new(want);
     let src = Arc::new(DOC.to_string());
 
@@ -139,23 +139,24 @@ fn every_entry_point_agrees_under_contention() {
         handles.push(thread::spawn(move || {
             // A parser per thread, reused — the case the docs recommend,
             // and the one where shared state would show up.
-            let mut parser = dacodec::Parser::new();
-            let mut idx = dacodec::stream::Index::default();
-            let mut ws = dacodec::Workspace::new();
+            let mut parser = dacode_json::Parser::new();
+            let mut idx = dacode_json::stream::Index::default();
+            let mut ws = dacode_json::Workspace::new();
 
             for i in 0..500 {
                 let b = src.as_bytes();
 
                 // typed, via the default path
-                let got: Vec<Rec> = dacodec::from_slice(b).expect("from_slice");
+                let got: Vec<Rec> = dacode_json::from_slice(b).expect("from_slice");
                 assert_eq!(&got, want.as_ref(), "thread {t} iter {i}");
 
                 // typed, streaming with a reused index
-                let got: Vec<Rec> = dacodec::stream::from_slice_with(&mut idx, b).expect("stream");
+                let got: Vec<Rec> =
+                    dacode_json::stream::from_slice_with(&mut idx, b).expect("stream");
                 assert_eq!(&got, want.as_ref());
 
                 // typed, no index
-                let got: Vec<Rec> = dacodec::direct::from_slice(b).expect("direct");
+                let got: Vec<Rec> = dacode_json::direct::from_slice(b).expect("direct");
                 assert_eq!(&got, want.as_ref());
 
                 // the pool, through a reused parser and a reused workspace
@@ -166,7 +167,7 @@ fn every_entry_point_agrees_under_contention() {
 
                 // on-demand, which allocates nothing
                 let mut sum = 0i64;
-                dacodec::pull::select(b, &[b"score"], |got| {
+                dacode_json::pull::select(b, &[b"score"], |got| {
                     sum += got[0].and_then(|v| v.as_int::<i64>()).unwrap_or(0);
                     Ok(())
                 })
@@ -175,7 +176,7 @@ fn every_entry_point_agrees_under_contention() {
 
                 // writing into a stack buffer
                 let mut buf = [0u8; 64];
-                let mut w = dacodec::write::Writer::new(&mut buf);
+                let mut w = dacode_json::write::Writer::new(&mut buf);
                 w.begin_object().expect("obj");
                 w.key("t").expect("key").u64(u64::from(t)).expect("val");
                 w.end_object().expect("end");
@@ -183,7 +184,7 @@ fn every_entry_point_agrees_under_contention() {
                 assert_eq!(out, format!(r#"{{"t":{t}}}"#));
 
                 // serializing
-                let s = dacodec::to_string(want.as_ref()).expect("ser");
+                let s = dacode_json::to_string(want.as_ref()).expect("ser");
                 assert_eq!(s, serde_json::to_string(want.as_ref()).expect("serde_json"));
             }
         }));
@@ -197,7 +198,7 @@ fn every_entry_point_agrees_under_contention() {
 /// to be `Sync`.
 #[test]
 fn a_parsed_document_can_be_read_from_many_threads() {
-    let mut ws = dacodec::Workspace::new();
+    let mut ws = dacode_json::Workspace::new();
     let doc = ws.parse(DOC.as_bytes());
 
     thread::scope(|s| {
@@ -222,12 +223,12 @@ fn a_parsed_document_can_be_read_from_many_threads() {
 /// `mmap`ed once and read by a pool of workers.
 #[test]
 fn a_flat_buffer_can_be_read_from_many_threads() {
-    let mut ws = dacodec::Workspace::new();
+    let mut ws = dacode_json::Workspace::new();
     let buf = {
         let doc = ws.parse(DOC.as_bytes());
-        dacodec::flat::encode(doc).expect("encode")
+        dacode_json::flat::encode(doc).expect("encode")
     };
-    let view = dacodec::flat::View::new(&buf).expect("view");
+    let view = dacode_json::flat::View::new(&buf).expect("view");
 
     thread::scope(|s| {
         for _ in 0..8 {
@@ -275,7 +276,7 @@ fn a_flat_buffer_can_be_read_from_many_threads() {
 #[test]
 fn one_document_is_read_by_many_threads_without_copying() {
     // --- scoped: share the handle itself ------------------------------
-    let mut ws = dacodec::Workspace::new();
+    let mut ws = dacode_json::Workspace::new();
     let doc = ws.parse(DOC.as_bytes());
     let doc_ref = &doc;
     thread::scope(|s| {
@@ -288,16 +289,16 @@ fn one_document_is_read_by_many_threads_without_copying() {
     //
     // `Arc<(Vec<u8>, Pool)>` — one allocation, made once. Each thread
     // pairs them back into a `Doc`, which allocates nothing.
-    let owned: Arc<(Vec<u8>, dacodec::Pool)> = {
+    let owned: Arc<(Vec<u8>, dacode_json::Pool)> = {
         let bytes = DOC.as_bytes().to_vec();
-        let pool = dacodec::strict::parse_to_pool(&bytes).expect("parse");
+        let pool = dacode_json::strict::parse_to_pool(&bytes).expect("parse");
         Arc::new((bytes, pool))
     };
     let mut handles = Vec::new();
     for _ in 0..4 {
         let owned = Arc::clone(&owned);
         handles.push(thread::spawn(move || {
-            let doc = dacodec::Document::new(&owned.0, &owned.1);
+            let doc = dacode_json::Document::new(&owned.0, &owned.1);
             assert_eq!(score_of(doc), 66);
         }));
     }
@@ -311,15 +312,15 @@ fn one_document_is_read_by_many_threads_without_copying() {
     // `View::new` validates a 32-byte header and returns; there is no
     // per-thread cost beyond that.
     let buf: Arc<Vec<u8>> = {
-        let mut ws = dacodec::Workspace::new();
+        let mut ws = dacode_json::Workspace::new();
         let doc = ws.parse(DOC.as_bytes());
-        Arc::new(dacodec::flat::encode(doc).expect("encode"))
+        Arc::new(dacode_json::flat::encode(doc).expect("encode"))
     };
     let mut handles = Vec::new();
     for _ in 0..4 {
         let buf = Arc::clone(&buf);
         handles.push(thread::spawn(move || {
-            let view = dacodec::flat::View::new(&buf).expect("view");
+            let view = dacode_json::flat::View::new(&buf).expect("view");
             let total: i64 = view
                 .root()
                 .elements()
@@ -334,7 +335,7 @@ fn one_document_is_read_by_many_threads_without_copying() {
     }
 }
 
-fn score_of(doc: dacodec::Document<'_>) -> i64 {
+fn score_of(doc: dacode_json::Document<'_>) -> i64 {
     doc.root()
         .elements()
         .filter_map(|r| r.get("score"))

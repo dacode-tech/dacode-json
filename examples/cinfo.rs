@@ -1,7 +1,7 @@
 fn main() {
     #[cfg(feature = "cbench")]
     {
-        use dacodec::cbench::{Padded, SimdJson, YyJson};
+        use dacode_json::cbench::{Padded, SimdJson, YyJson};
         println!("yyjson    version : {}", YyJson::version());
         println!("simdjson  version : {}", SimdJson::version());
         println!("simdjson  kernel  : {}", SimdJson::implementation());

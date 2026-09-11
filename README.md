@@ -1,4 +1,4 @@
-# dacodec
+# dacode-json
 
 Fast, allocation-light JSON for Rust — a drop-in `serde_json` replacement
 for the typed path, plus a zero-copy wire format for data you read more than
@@ -6,7 +6,7 @@ once.
 
 ```toml
 [dependencies]
-dacodec = "0.1"
+dacode-json = "0.1"
 ```
 
 ```rust
@@ -15,18 +15,23 @@ use serde::{Serialize, Deserialize};
 #[derive(Serialize, Deserialize)]
 struct Config { name: String, port: u16 }
 
-let cfg: Config = dacodec::from_str(r#"{"name":"edge","port":8080}"#)?;
-let json = dacodec::to_string(&cfg)?;
+let cfg: Config = dacode_json::from_str(r#"{"name":"edge","port":8080}"#)?;
+let json = dacode_json::to_string(&cfg)?;
 ```
 
-Change `serde_json::` to `dacodec::` and nothing else. Output is
+Change `serde_json::` to `dacode_json::` and nothing else. Output is
 byte-identical, verified over the whole test corpus.
+
+> **Formerly named `dacodec`.** Renamed before the first publish, so no released
+> version ever carried the old name. Commit messages, benchmark baselines and
+> the measurement tables in `docs/` were recorded under `dacodec` and refer to
+> this same crate.
 
 ---
 
 ## Why
 
-| | dacodec | serde_json |
+| | dacode-json | serde_json |
 |---|---|---|
 | DOM build, 10 MiB | **419 MiB/s** | 132 MiB/s |
 | validate, 1 MiB | **2.47 ms** | 7.22 ms |
@@ -40,14 +45,14 @@ byte-identical, verified over the whole test corpus.
 | RFC 8259 (JSONTestSuite) | 284/284 | 284/284 |
 | float parsing | correctly rounded | off by ≤2 ULP on 17.7% of high-precision literals |
 
-Read that table honestly. `dacodec` edges ahead of `serde_json` on
+Read that table honestly. `dacode-json` edges ahead of `serde_json` on
 deserialization — 6% owned, 4% borrowing, 6% skipping most fields — and
 uses the same memory to the allocation. It is still **behind on
 serialization**, and `sonic-rs` is well ahead on the first two (378 and
 444 MiB/s) by spending 236 `unsafe` blocks to get there. Single-digit
 margins on one corpus and one machine: pick on features, not on 6%.
 
-dacodec wins where a document is *inspected* rather than converted: DOM
+dacode-json wins where a document is *inspected* rather than converted: DOM
 construction (3.2×), validation (2.9×), escaping (4.2×), memory (2.2×) —
 and by three to six orders of magnitude on anything you read more than once,
 via the zero-copy format below.
@@ -60,12 +65,12 @@ these reverse: [`docs/RESULTS.md`](docs/RESULTS.md).
 
 `Deserialize` cannot say "give me two of these forty fields and stop
 looking" — serde must yield every key so the derived matcher can reject the
-unknown ones. `dacodec::pull` is the other shape, and it **allocates
+unknown ones. `dacode_json::pull` is the other shape, and it **allocates
 nothing**:
 
 ```rust
 let mut total = 0i64;
-dacodec::pull::select(json, &[b"id", b"score"], |got| {
+dacode_json::pull::select(json, &[b"id", b"score"], |got| {
     total += got[1].and_then(|v| v.as_i64()).unwrap_or(0);
     Ok(())
 })?;
@@ -96,8 +101,8 @@ The engines this was modelled on, measured in-process through FFI
 |---|---|
 | simdjson On-Demand (C++) | **1 608** |
 | yyjson (C) | ~1 010 |
-| **dacodec `pull`** | **778** |
-| dacodec `from_slice` (serde) | 656 |
+| **dacode-json `pull`** | **778** |
+| dacode-json `from_slice` (serde) | 656 |
 | serde_json, into structs | 538 |
 | serde_json, into `Value` | 122 |
 
@@ -121,13 +126,13 @@ Full numbers, methodology and caveats: [`docs/RESULTS.md`](docs/RESULTS.md).
 ### Owned types
 
 ```rust
-let cfg: Config = dacodec::from_str(text)?;
-let cfg: Config = dacodec::from_slice(bytes)?;
-let cfg: Config = dacodec::from_reader(file)?;
+let cfg: Config = dacode_json::from_str(text)?;
+let cfg: Config = dacode_json::from_slice(bytes)?;
+let cfg: Config = dacode_json::from_reader(file)?;
 
-let s: String   = dacodec::to_string(&cfg)?;
-let v: Vec<u8>  = dacodec::to_vec(&cfg)?;
-dacodec::to_writer(&mut buffer, &cfg)?;   // reuses the buffer
+let s: String   = dacode_json::to_string(&cfg)?;
+let v: Vec<u8>  = dacode_json::to_vec(&cfg)?;
+dacode_json::to_writer(&mut buffer, &cfg)?;   // reuses the buffer
 ```
 
 ### Borrowing types — no copying
@@ -142,7 +147,7 @@ struct Row<'a> {
     #[serde(borrow)] tags: Vec<&'a str>,
 }
 
-let mut p = dacodec::Parser::new();
+let mut p = dacode_json::Parser::new();
 let row: Row<'_> = p.deserialize(bytes)?;   // row.name points into `bytes`
 ```
 
@@ -156,7 +161,7 @@ without leaking it.
 allocates **nothing**:
 
 ```rust
-let mut p = dacodec::Parser::with_capacity(64 * 1024);
+let mut p = dacode_json::Parser::with_capacity(64 * 1024);
 for line in lines {
     let doc = p.parse(line)?;
     if let Some(v) = doc.root().get("status") {
@@ -168,7 +173,7 @@ for line in lines {
 ### Errors carry a position
 
 ```rust
-match dacodec::from_str::<Config>(bad) {
+match dacode_json::from_str::<Config>(bad) {
     Err(e) => println!("{e} (byte {:?})", e.offset()),   // "expected ':' at byte 11"
     Ok(_)  => {}
 }
@@ -176,17 +181,17 @@ match dacodec::from_str::<Config>(bad) {
 
 ---
 
-## Zero-copy: `dacodec::flat`
+## Zero-copy: `dacode_json::flat`
 
 For data you write once and read many times — caches, mmapped files, RPC
 payloads — parsing at every read is wasted work. `flat` stores a document in
 a self-contained buffer that is read directly.
 
 ```rust
-use dacodec::flat::{self, View};
+use dacode_json::flat::{self, View};
 
 // once, on the writer side
-let mut p = dacodec::Parser::new();
+let mut p = dacode_json::Parser::new();
 let buf = flat::encode(p.parse(json)?)?;      // store or send `buf`
 
 // many times, on the reader side
@@ -200,8 +205,8 @@ Field positions become compile-time constants, so key strings are never
 stored and a read is a load at a fixed offset:
 
 ```rust
-use dacodec::flat_struct;
-use dacodec::flat::typed::{TypedView, TypedWriter, de};
+use dacode_json::flat_struct;
+use dacode_json::flat::typed::{TypedView, TypedWriter, de};
 
 flat_struct! {
     pub struct Record : RecordFields {
@@ -497,7 +502,7 @@ high-precision literals it deviates on 17.7%, by up to 2 ULP.
 system and no allocator:
 
 ```toml
-dacodec = { version = "0.1", default-features = false }
+dacode-json = { version = "0.1", default-features = false }
 ```
 
 What survives is `pull` (read fields out of a document), `write` (build one
@@ -530,7 +535,7 @@ a fixed buffer and sum a field. `.text` + `.rodata`, floor subtracted:
 | `write` | **5 896** |
 | `pull` + `as_i64` | 24 486 |
 | `serde_json` (`no_std` + `alloc`) | 29 964 |
-| `dacodec` typed (`serde` + `alloc`) | 43 508 |
+| `dacode-json` typed (`serde` + `alloc`) | 43 508 |
 | yyjson (C, reader only) | 69 316 |
 | simdjson, sonic-rs | neither compiles for the target |
 
@@ -541,7 +546,7 @@ The two accessors that cannot reach it read the digits into the width you
 ask for:
 
 ```rust
-dacodec::pull::select(json, &[b"t", b"h", b"v"], |got| {
+dacode_json::pull::select(json, &[b"t", b"h", b"v"], |got| {
     let temp: i16 = got[0].and_then(|v| v.as_int()).unwrap_or(0);
     let hum:  u8  = got[1].and_then(|v| v.as_int()).unwrap_or(0);
     // `3.9` as millivolts, no float parser: 3 900.
