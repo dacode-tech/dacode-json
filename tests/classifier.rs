@@ -158,7 +158,7 @@ fn structural_only_table_is_exact() {
         );
     }
     // The two bytes that must NOT be in the structural table.
-    for b in [b'"', b'\\'] {
+    for b in *b"\"\\" {
         let lo = STRUCT_LO.get((b & 0xF) as usize).copied().unwrap_or(0);
         let hi = STRUCT_HI.get((b >> 4) as usize).copied().unwrap_or(0);
         assert_eq!(lo & hi, 0, "{:?} must not be in the structural table", b as char);

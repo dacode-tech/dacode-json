@@ -107,13 +107,11 @@ fn bench_classifier(c: &mut Criterion) {
                 // consecutive chunks stay independent (no false dependency
                 // that would hide the real critical path).
                 let mut acc = (0u16, 0u16, 0u16);
-                for ch in black_box(bytes).chunks_exact(16) {
-                    if let Ok(arr) = <&[u8; 16]>::try_from(ch) {
-                        let r = f(arr);
-                        acc.0 ^= r.structural;
-                        acc.1 ^= r.quote;
-                        acc.2 ^= r.backslash;
-                    }
+                for arr in black_box(bytes).as_chunks::<16>().0 {
+                    let r = f(arr);
+                    acc.0 ^= r.structural;
+                    acc.1 ^= r.quote;
+                    acc.2 ^= r.backslash;
                 }
                 black_box(acc)
             });
@@ -145,11 +143,9 @@ fn bench_phases(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("1_classify", name), bytes, |b, bytes| {
             b.iter(|| {
                 let mut acc = 0u16;
-                for ch in black_box(bytes).chunks_exact(16) {
-                    if let Ok(a) = <&[u8; 16]>::try_from(ch) {
-                        let r = classify_hybrid(a);
-                        acc ^= r.structural ^ r.quote ^ r.backslash;
-                    }
+                for a in black_box(bytes).as_chunks::<16>().0 {
+                    let r = classify_hybrid(a);
+                    acc ^= r.structural ^ r.quote ^ r.backslash;
                 }
                 black_box(acc)
             });
@@ -160,16 +156,14 @@ fn bench_phases(c: &mut Criterion) {
                 let mut esc = 0u16;
                 let mut str_ = 0u16;
                 let mut acc = 0u16;
-                for ch in black_box(bytes).chunks_exact(16) {
-                    if let Ok(a) = <&[u8; 16]>::try_from(ch) {
-                        let cl = classify_hybrid(a);
-                        let (escaped, e) = find_escaped(cl.backslash, esc);
-                        esc = e;
-                        let real_q = cl.quote & !escaped;
-                        let in_str = prefix_xor16(real_q) ^ str_;
-                        str_ = if (in_str >> 15) & 1 != 0 { 0xFFFF } else { 0 };
-                        acc ^= real_q | (cl.structural & !in_str);
-                    }
+                for a in black_box(bytes).as_chunks::<16>().0 {
+                    let cl = classify_hybrid(a);
+                    let (escaped, e) = find_escaped(cl.backslash, esc);
+                    esc = e;
+                    let real_q = cl.quote & !escaped;
+                    let in_str = prefix_xor16(real_q) ^ str_;
+                    str_ = if (in_str >> 15) & 1 != 0 { 0xFFFF } else { 0 };
+                    acc ^= real_q | (cl.structural & !in_str);
                 }
                 black_box(acc)
             });

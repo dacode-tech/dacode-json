@@ -755,15 +755,15 @@ fn scan_flags(raw: &[u8]) -> Flags {
     let mut escape = 0u8;
     let mut high = 0u8;
 
-    let mut chunks = raw.chunks_exact(16);
-    for c in &mut chunks {
+    let (chunks, tail) = raw.as_chunks::<16>();
+    for c in chunks {
         for &b in c {
             control |= u8::from(b < 0x20);
             escape |= u8::from(b == b'\\');
             high |= b;
         }
     }
-    for &b in chunks.remainder() {
+    for &b in tail {
         control |= u8::from(b < 0x20);
         escape |= u8::from(b == b'\\');
         high |= b;
