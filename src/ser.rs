@@ -534,7 +534,20 @@ impl<'a, 'b> ser::Serializer for &'b mut Serializer<'a> {
         })
     }
 
-    fn serialize_struct(self, _name: &'static str, len: usize) -> Result<Compound<'a, 'b>> {
+    fn serialize_struct(self, name: &'static str, len: usize) -> Result<Compound<'a, 'b>> {
+        // A `RawJson` splices its text verbatim: open no brace and route the
+        // single sentinel field through `RawEmitter`. Mirrors `serde_json`'s
+        // `RawValue`, whose `serialize` also emits `serialize_struct(TOKEN, 1)`.
+        #[cfg(feature = "raw_value")]
+        if name == crate::raw::TOKEN {
+            return Ok(Compound {
+                ser: self,
+                first: true,
+                close: Close::RawValue,
+            });
+        }
+        #[cfg(not(feature = "raw_value"))]
+        let _ = name;
         self.serialize_map(Some(len))
     }
 
@@ -562,6 +575,10 @@ enum Close {
     Object,
     ArrayInObject,
     ObjectInObject,
+    /// Verbatim raw-JSON splice (`RawJson`): opened and closed with no braces,
+    /// the single field's text copied out unchanged.
+    #[cfg(feature = "raw_value")]
+    RawValue,
 }
 
 /// Shared state for every compound form.
@@ -593,6 +610,9 @@ impl Compound<'_, '_> {
             Close::Object => self.ser.out.push(b'}'),
             Close::ArrayInObject => self.ser.out.extend_from_slice(b"]}"),
             Close::ObjectInObject => self.ser.out.extend_from_slice(b"}}"),
+            // A raw splice opened no brace, so it closes with nothing.
+            #[cfg(feature = "raw_value")]
+            Close::RawValue => {}
         }
         Ok(())
     }
@@ -675,6 +695,20 @@ impl ser::SerializeStruct for Compound<'_, '_> {
         key: &'static str,
         v: &T,
     ) -> Result<()> {
+        // A `RawJson` sentinel carries exactly one field, keyed by `TOKEN`,
+        // whose value is the JSON text; splice it verbatim instead of writing
+        // `"key":"escaped"`. Guard the key as `serde_json` does, so a struct
+        // merely *renamed* to the sentinel cannot hijack the raw path.
+        #[cfg(feature = "raw_value")]
+        if matches!(self.close, Close::RawValue) {
+            return if key == crate::raw::TOKEN {
+                v.serialize(RawEmitter {
+                    out: &mut *self.ser.out,
+                })
+            } else {
+                Err(err("raw value field must carry the sentinel key"))
+            };
+        }
         self.comma();
         write_escaped(self.ser.out, key, self.ser.opts);
         self.ser.out.push(b':');
@@ -853,5 +887,156 @@ impl ser::Serializer for KeySerializer<'_, '_> {
         _: usize,
     ) -> Result<Self::SerializeStructVariant> {
         Err(err("object key must be a string"))
+    }
+}
+
+/// Writes a `RawJson`'s text into the output verbatim.
+///
+/// The sentinel field's value is always the JSON text (a `str`), so
+/// `serialize_str` is the only meaningful input; everything else is a misuse
+/// and errors rather than silently emitting wrong bytes. `dacodec`'s analogue
+/// of `serde_json`'s `RawValueStrEmitter`.
+#[cfg(feature = "raw_value")]
+struct RawEmitter<'c> {
+    out: &'c mut Vec<u8>,
+}
+
+#[cfg(feature = "raw_value")]
+impl<'c> ser::Serializer for RawEmitter<'c> {
+    type Ok = ();
+    type Error = Error;
+    type SerializeSeq = ser::Impossible<(), Error>;
+    type SerializeTuple = ser::Impossible<(), Error>;
+    type SerializeTupleStruct = ser::Impossible<(), Error>;
+    type SerializeTupleVariant = ser::Impossible<(), Error>;
+    type SerializeMap = ser::Impossible<(), Error>;
+    type SerializeStruct = ser::Impossible<(), Error>;
+    type SerializeStructVariant = ser::Impossible<(), Error>;
+
+    fn serialize_str(self, v: &str) -> Result<()> {
+        // Verbatim: `v` is validated JSON (checked at `RawJson` construction),
+        // so splicing it cannot corrupt the surrounding document. No quotes,
+        // no escaping — that is the whole point of a raw value.
+        self.out.extend_from_slice(v.as_bytes());
+        Ok(())
+    }
+
+    fn serialize_bool(self, _: bool) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_i8(self, _: i8) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_i16(self, _: i16) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_i32(self, _: i32) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_i64(self, _: i64) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_i128(self, _: i128) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_u8(self, _: u8) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_u16(self, _: u16) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_u32(self, _: u32) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_u64(self, _: u64) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_u128(self, _: u128) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_f32(self, _: f32) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_f64(self, _: f64) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_char(self, _: char) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_bytes(self, _: &[u8]) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_none(self) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_some<T: Serialize + ?Sized>(self, _: &T) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_unit(self) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_unit_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+    ) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: &T,
+    ) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: &T,
+    ) -> Result<()> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_tuple_struct(
+        self,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleStruct> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleVariant> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_struct(self, _: &'static str, _: usize) -> Result<Self::SerializeStruct> {
+        Err(err("raw value must be JSON text"))
+    }
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeStructVariant> {
+        Err(err("raw value must be JSON text"))
     }
 }

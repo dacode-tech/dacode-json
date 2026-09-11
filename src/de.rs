@@ -211,9 +211,19 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
 
     fn deserialize_newtype_struct<V: Visitor<'de>>(
         self,
-        _name: &'static str,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value> {
+        // A `RawJson` field captures this value's canonical JSON text instead of
+        // deserializing into an inner type. The pool indexes composites by child
+        // position, not byte span, so the capture is `to_json` (deterministic),
+        // not the original source bytes — see `crate::raw`.
+        #[cfg(feature = "raw_value")]
+        if name == crate::raw::TOKEN {
+            return visitor.visit_string(self.value.to_json());
+        }
+        #[cfg(not(feature = "raw_value"))]
+        let _ = name;
         visitor.visit_newtype_struct(self)
     }
 

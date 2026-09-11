@@ -158,6 +158,8 @@ pub mod api;
 pub mod de;
 #[cfg(feature = "serde")]
 pub mod direct;
+#[cfg(feature = "raw_value")]
+pub mod raw;
 #[cfg(feature = "serde")]
 pub mod ser;
 
@@ -184,6 +186,9 @@ pub use api::{
 };
 #[cfg(all(feature = "serde", feature = "std"))]
 pub use api::from_reader;
+
+#[cfg(feature = "raw_value")]
+pub use raw::RawJson;
 
 #[cfg(feature = "alloc")]
 pub use pool::{Node, Pool};

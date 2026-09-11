@@ -90,6 +90,11 @@ std = ["alloc", "serde?/std"]
 alloc = []
 # `serde::Deserializer` over the node pool - see src/de.rs.
 serde = ["alloc", "dep:serde"]
+# An owned raw-JSON value (`RawJson`) that splices verbatim into serialized
+# output, plus the matching capture path on deserialize - see src/raw.rs.
+# The analogue of serde_json's `raw_value` feature; off by default so the
+# serializer/deserializer hot paths are untouched for builds that don't need it.
+raw_value = ["serde"]
 # Pulls in the comparison parsers so `src/bin/profile.rs` can build.
 profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 # Compiles the vendored yyjson (C) and simdjson (C++) baselines. Off by

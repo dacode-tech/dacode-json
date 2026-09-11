@@ -489,9 +489,33 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
 
     fn deserialize_newtype_struct<V: Visitor<'de>>(
         self,
-        _n: &'static str,
+        name: &'static str,
         visitor: V,
     ) -> Result<V::Value> {
+        // A `RawJson` captures this value's exact source bytes: skip one
+        // validated value (reusing the ignored-any walk) to find where it ends,
+        // then hand the span to the visitor verbatim. Byte-exact, unlike the
+        // pool deserializer, which re-serialises — see `crate::raw`.
+        #[cfg(feature = "raw_value")]
+        if name == crate::raw::TOKEN {
+            let ValueDe { c, depth } = self;
+            c.skip_ws();
+            let start = c.pos;
+            <de::IgnoredAny as serde::Deserialize<'de>>::deserialize(ValueDe {
+                c: &mut *c,
+                depth,
+            })?;
+            let end = c.pos;
+            let span = c
+                .input
+                .get(start..end)
+                .ok_or_else(|| err(start, "raw value span out of range"))?;
+            let text = core::str::from_utf8(span)
+                .map_err(|_| err(start, "raw value is not valid UTF-8"))?;
+            return visitor.visit_borrowed_str(text);
+        }
+        #[cfg(not(feature = "raw_value"))]
+        let _ = name;
         visitor.visit_newtype_struct(self)
     }
 
