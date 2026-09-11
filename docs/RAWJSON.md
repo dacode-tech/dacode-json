@@ -137,6 +137,23 @@ it; until then it fails loudly rather than guessing.
 ```bash
 cargo test --features raw_value --lib raw::    # the RawJson unit tests
 cargo test --features raw_value --doc raw      # the module doc example
+cargo bench --features raw_value --bench rawjson # splice vs re-encode, capture cost
 cargo clippy --all-targets --features raw_value
 cargo build --no-default-features --features raw_value   # no_std + alloc
 ```
+
+Quote bench numbers from `tools/isolate.sh rawjson '^rawjson' --features
+raw_value`, one process per benchmark, for consistency with the rest of the
+repo. Isolation buys little for this bench specifically: it stages its inputs
+once through `bench_with_input` rather than per batch, so the cross-benchmark
+interference `isolate.sh` exists to remove barely applies, and within a single
+build the two harnesses agree to ~0.3% (13.92 µs shared against 13.97 µs
+isolated for the 853 KB splice). What moves these numbers is the *build*: with
+`lto = "fat"` and `codegen-units = 1`, one edit to this file moved the same
+in-process measurement from 14.43 µs to 17.57 µs (+22%) — the inlining drift
+`tools/isolate.sh`'s header documents at up to ~2.5×, and which its header
+assigns to the per-file wrappers rather than to isolation, so no harness choice
+removes it. Take both arms of any ratio from one binary, and never mix figures
+across builds. The bench also asserts the verbatim guarantees before it times
+anything — including over a whitespace-padded payload, which is the only input
+that can tell a byte-exact capture from a canonicalising one (§4).

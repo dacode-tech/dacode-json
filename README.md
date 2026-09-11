@@ -372,6 +372,7 @@ time.
 cargo bench --bench parse       # vs serde_json, simd-json, sonic-rs
 cargo bench --bench structs     # struct de/ser and escaping
 cargo bench --bench zerocopy    # flat vs rkyv vs re-parsing
+cargo bench --features raw_value --bench rawjson   # RawJson splice vs re-encode
 cargo bench --all-features --bench cbaseline   # vs yyjson and simdjson (C)
 
 tools/isolate.sh parse '^parse_10mb/'   # one process per benchmark
@@ -484,6 +485,7 @@ high-precision literals it deviates on 17.7%, by up to 2 ULP.
 | `std` | ✅ | an operating system: `from_reader`, and the measurement machinery |
 | `serde` | ✅ | the public API; implies `alloc` |
 | `alloc` | | an allocator, but no OS: the node pool, `strict`, the `flat` builders |
+| `raw_value` | | `RawJson`: an owned value that splices raw JSON into output verbatim, byte-stable (implies `serde`) — [`docs/RAWJSON.md`](docs/RAWJSON.md) |
 | `vela-compat` | | the Vela tier ports (`tiers`, `onepass`) — see below |
 | `fuzzing` | | the differential fuzz harness (implies `vela-compat`) |
 | `cbench` | | vendored yyjson and simdjson, for benchmarking (needs a C/C++ compiler) |

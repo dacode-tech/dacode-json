@@ -171,3 +171,8 @@ required-features = ["vela-compat"]
 name = "cbaseline"
 harness = false
 required-features = ["cbench"]
+
+[[bench]]
+name = "rawjson"
+harness = false
+required-features = ["raw_value"]
