@@ -5,7 +5,11 @@
 //!
 //! Gated behind the `cbench` feature, because simdjson's single-header
 //! amalgamation is 2.7 MB of C++17 and takes ~30 s to compile. A plain
-//! `cargo test` should not pay for that.
+//! `cargo test` should not pay for that. The gate is a `cfg`, not the
+//! runtime env check it replaces, because `cc` is an *optional*
+//! build-dependency behind the same feature: with `cbench` off the crate
+//! is not merely unused but absent, and it stays out of every consumer's
+//! resolved dependency graph — which is what graph-auditing gates read.
 
 fn main() {
     println!("cargo:rerun-if-changed=vendor/shim.c");
@@ -13,10 +17,12 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/yyjson/yyjson.c");
     println!("cargo:rerun-if-changed=build.rs");
 
-    if std::env::var("CARGO_FEATURE_CBENCH").is_err() {
-        return;
-    }
+    #[cfg(feature = "cbench")]
+    compile_baselines();
+}
 
+#[cfg(feature = "cbench")]
+fn compile_baselines() {
     // `vendor/` is excluded from the published crate: it is 11 MB of C and
     // C++ that only the baseline benchmarks need, and shipping it would
     // make every consumer download it. Fail with an explanation rather

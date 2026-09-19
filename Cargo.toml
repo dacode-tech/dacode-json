@@ -61,7 +61,11 @@ path = "src/bin/memprofile.rs"
 required-features = ["profiling"]
 
 [build-dependencies]
-cc = "1"
+# Optional, gated behind `cbench`: build.rs only compiles the vendored C/C++
+# baselines under that feature, and an unconditional build-dep would put `cc`
+# in the resolved graph of *every* consumer — where graph-auditing gates read
+# it as this crate compiling C, which without `cbench` it does not.
+cc = { version = "1", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -98,8 +102,10 @@ raw_value = ["serde"]
 # Pulls in the comparison parsers so `src/bin/profile.rs` can build.
 profiling = ["serde", "dep:serde_json", "dep:simd-json", "dep:sonic-rs"]
 # Compiles the vendored yyjson (C) and simdjson (C++) baselines. Off by
-# default: simdjson's amalgamation is 2.7 MB of C++17 and takes ~30s.
-cbench = []
+# default: simdjson's amalgamation is 2.7 MB of C++17 and takes ~30s. Also
+# the gate that pulls in the optional `cc` build-dependency, so the C
+# toolchain marker never reaches a consumer's dependency graph uninvited.
+cbench = ["dep:cc"]
 # Differential fuzzing harness (src/fuzz.rs). Needs serde_json to compare
 # against, so it rides on the `profiling` feature's dependency set, and it
 # cross-checks the reference tiers, so it needs those too.
