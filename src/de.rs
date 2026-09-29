@@ -29,13 +29,13 @@ use crate::errmsg::{Msg, Unexpected};
 use crate::pool::Pool;
 use crate::query::{Doc, Value};
 use crate::tag::Type;
+use alloc::borrow::Cow;
+use core::fmt;
 use serde::de::{
     self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess,
     Visitor,
 };
 use serde::forward_to_deserialize_any;
-use alloc::borrow::Cow;
-use core::fmt;
 
 /// Deserialisation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,9 +181,7 @@ impl<'de> de::Deserializer<'de> for Deserializer<'de> {
             Type::Number => visitor.visit_i64(v.as_i64().unwrap_or(0)),
             Type::Float => visitor.visit_f64(v.as_f64().unwrap_or(0.0)),
             Type::String | Type::Key => visit_str(v, visitor),
-            Type::Array => visitor.visit_seq(SeqReader {
-                iter: v.elements(),
-            }),
+            Type::Array => visitor.visit_seq(SeqReader { iter: v.elements() }),
             Type::Object => visitor.visit_map(MapReader {
                 iter: v.entries(),
                 pending: None,

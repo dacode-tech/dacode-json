@@ -26,11 +26,7 @@ extern "C" {
     fn vj_yy_parse_insitu(dat: *mut c_char, len: usize) -> usize;
     fn vj_pool_new(size: usize) -> *mut core::ffi::c_void;
     fn vj_pool_free(p: *mut core::ffi::c_void);
-    fn vj_yy_parse_pool(
-        p: *mut core::ffi::c_void,
-        dat: *const c_char,
-        len: usize,
-    ) -> usize;
+    fn vj_yy_parse_pool(p: *mut core::ffi::c_void, dat: *const c_char, len: usize) -> usize;
     fn vj_yy_sum_field(dat: *const c_char, len: usize, key: *const c_char) -> c_longlong;
     fn vj_yy_first_field(dat: *const c_char, len: usize, key: *const c_char) -> c_longlong;
     fn vj_yy_extract_all(dat: *const c_char, len: usize) -> u64;

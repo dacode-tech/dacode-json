@@ -14,17 +14,20 @@
 //! * `first_only` — one field from the first record. Pure per-call overhead.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
-use sonic_rs::{JsonContainerTrait, JsonValueTrait};
 use dacode_json::corpus;
 use dacode_json::strict::StrictParser;
 use dacode_json::Workspace;
+use sonic_rs::{JsonContainerTrait, JsonValueTrait};
+use std::hint::black_box;
 
 const SEED: u64 = 0x9E11;
 
 fn corpora() -> Vec<(&'static str, String)> {
     vec![
-        ("records_256kb", corpus::sized(256 * 1024, SEED, corpus::records)),
+        (
+            "records_256kb",
+            corpus::sized(256 * 1024, SEED, corpus::records),
+        ),
         ("records_4mb", corpus::sized(4 << 20, SEED, corpus::records)),
     ]
 }
@@ -54,17 +57,21 @@ fn bench_sum_field(c: &mut Criterion) {
             assert_eq!(ours, theirs, "{name}: implementations disagree");
         }
 
-        group.bench_with_input(BenchmarkId::new("vela_faithful", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let doc = ws.parse(black_box(bytes));
-                let sum: i64 = doc
-                    .root()
-                    .elements()
-                    .filter_map(|r| r.get("score").and_then(|v| v.as_i64()))
-                    .sum();
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("vela_faithful", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let doc = ws.parse(black_box(bytes));
+                    let sum: i64 = doc
+                        .root()
+                        .elements()
+                        .filter_map(|r| r.get("score").and_then(|v| v.as_i64()))
+                        .sum();
+                    black_box(sum)
+                });
+            },
+        );
 
         let mut sp = StrictParser::with_capacity(bytes.len());
         let _ = sp.validate(bytes);
@@ -80,46 +87,61 @@ fn bench_sum_field(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("serde_json_value", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let v: serde_json::Value = serde_json::from_slice(black_box(bytes)).expect("valid");
-                let sum: i64 = v
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|r| r.get("score")?.as_i64()).sum())
-                    .unwrap_or(0);
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("serde_json_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let v: serde_json::Value =
+                        serde_json::from_slice(black_box(bytes)).expect("valid");
+                    let sum: i64 = v
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|r| r.get("score")?.as_i64()).sum())
+                        .unwrap_or(0);
+                    black_box(sum)
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("sonic_rs_value", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let v: sonic_rs::Value = sonic_rs::from_slice(black_box(bytes)).expect("valid");
-                let sum: i64 = v
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|r| r.get("score").and_then(sonic_rs::JsonValueTrait::as_i64))
-                            .sum()
-                    })
-                    .unwrap_or(0);
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("sonic_rs_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let v: sonic_rs::Value = sonic_rs::from_slice(black_box(bytes)).expect("valid");
+                    let sum: i64 = v
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|r| {
+                                    r.get("score").and_then(sonic_rs::JsonValueTrait::as_i64)
+                                })
+                                .sum()
+                        })
+                        .unwrap_or(0);
+                    black_box(sum)
+                });
+            },
+        );
 
         // sonic-rs' lazy API is the design closest to the Vela pool: it
         // skips values it is not asked for.
-        group.bench_with_input(BenchmarkId::new("sonic_rs_lazy", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let mut sum: i64 = 0;
-                for item in sonic_rs::to_array_iter(black_box(bytes)) {
-                    let Ok(item) = item else { continue };
-                    if let Ok(v) = sonic_rs::get(item.as_raw_str().as_bytes(), ["score"]) {
-                        sum += sonic_rs::JsonValueTrait::as_i64(&v).unwrap_or(0);
+        group.bench_with_input(
+            BenchmarkId::new("sonic_rs_lazy", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let mut sum: i64 = 0;
+                    for item in sonic_rs::to_array_iter(black_box(bytes)) {
+                        let Ok(item) = item else { continue };
+                        if let Ok(v) = sonic_rs::get(item.as_raw_str().as_bytes(), ["score"]) {
+                            sum += sonic_rs::JsonValueTrait::as_i64(&v).unwrap_or(0);
+                        }
                     }
-                }
-                black_box(sum)
-            });
-        });
+                    black_box(sum)
+                });
+            },
+        );
     }
 
     group.finish();
@@ -135,25 +157,29 @@ fn bench_extract_all(c: &mut Criterion) {
 
         let mut ws = Workspace::with_capacity(bytes.len());
         let _ = ws.parse(bytes);
-        group.bench_with_input(BenchmarkId::new("vela_faithful", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let doc = ws.parse(black_box(bytes));
-                let mut acc = 0usize;
-                for rec in doc.root().elements() {
-                    for (k, v) in rec.entries() {
-                        acc += k.len();
-                        acc += match v.typ() {
-                            dacode_json::Type::String => v.as_str().map_or(0, |s| s.len()),
-                            dacode_json::Type::Number => v.as_i64().unwrap_or(0) as usize,
-                            dacode_json::Type::Bool => usize::from(v.as_bool() == Some(true)),
-                            dacode_json::Type::Array => v.elements().count(),
-                            _ => 0,
-                        };
+        group.bench_with_input(
+            BenchmarkId::new("vela_faithful", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let doc = ws.parse(black_box(bytes));
+                    let mut acc = 0usize;
+                    for rec in doc.root().elements() {
+                        for (k, v) in rec.entries() {
+                            acc += k.len();
+                            acc += match v.typ() {
+                                dacode_json::Type::String => v.as_str().map_or(0, |s| s.len()),
+                                dacode_json::Type::Number => v.as_i64().unwrap_or(0) as usize,
+                                dacode_json::Type::Bool => usize::from(v.as_bool() == Some(true)),
+                                dacode_json::Type::Array => v.elements().count(),
+                                _ => 0,
+                            };
+                        }
                     }
-                }
-                black_box(acc)
-            });
-        });
+                    black_box(acc)
+                });
+            },
+        );
 
         let mut sp = StrictParser::with_capacity(bytes.len());
         let _ = sp.validate(bytes);
@@ -177,25 +203,30 @@ fn bench_extract_all(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("serde_json_value", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let v: serde_json::Value = serde_json::from_slice(black_box(bytes)).expect("valid");
-                let mut acc = 0usize;
-                for rec in v.as_array().map(Vec::as_slice).unwrap_or_default() {
-                    for (k, val) in rec.as_object().into_iter().flatten() {
-                        acc += k.len();
-                        acc += match val {
-                            serde_json::Value::String(s) => s.len(),
-                            serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) as usize,
-                            serde_json::Value::Bool(b) => usize::from(*b),
-                            serde_json::Value::Array(a) => a.len(),
-                            _ => 0,
-                        };
+        group.bench_with_input(
+            BenchmarkId::new("serde_json_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let v: serde_json::Value =
+                        serde_json::from_slice(black_box(bytes)).expect("valid");
+                    let mut acc = 0usize;
+                    for rec in v.as_array().map(Vec::as_slice).unwrap_or_default() {
+                        for (k, val) in rec.as_object().into_iter().flatten() {
+                            acc += k.len();
+                            acc += match val {
+                                serde_json::Value::String(s) => s.len(),
+                                serde_json::Value::Number(n) => n.as_i64().unwrap_or(0) as usize,
+                                serde_json::Value::Bool(b) => usize::from(*b),
+                                serde_json::Value::Array(a) => a.len(),
+                                _ => 0,
+                            };
+                        }
                     }
-                }
-                black_box(acc)
-            });
-        });
+                    black_box(acc)
+                });
+            },
+        );
     }
 
     group.finish();
@@ -228,7 +259,12 @@ fn bench_first_only(c: &mut Criterion) {
     group.bench_function("serde_json_value", |b| {
         b.iter(|| {
             let v: serde_json::Value = serde_json::from_slice(black_box(bytes)).expect("valid");
-            black_box(v.get(0).and_then(|r| r.get("name")).and_then(|s| s.as_str()).map(str::len))
+            black_box(
+                v.get(0)
+                    .and_then(|r| r.get("name"))
+                    .and_then(|s| s.as_str())
+                    .map(str::len),
+            )
         });
     });
 
@@ -244,5 +280,10 @@ fn bench_first_only(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_first_only, bench_sum_field, bench_extract_all);
+criterion_group!(
+    benches,
+    bench_first_only,
+    bench_sum_field,
+    bench_extract_all
+);
 criterion_main!(benches);

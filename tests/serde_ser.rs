@@ -6,11 +6,11 @@
 // 3.141592653589793 below is test data, not an attempt at PI.
 #![allow(clippy::approx_constant)]
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use dacode_json::corpus;
 use dacode_json::ser::{self, Options};
 use dacode_json::{de, strict::StrictParser};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Byte-for-byte equality with `serde_json::to_string`.
 #[track_caller]

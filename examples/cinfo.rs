@@ -13,10 +13,16 @@ fn main() {
         println!("yyjson roundtrip len   = {}", YyJson::roundtrip(src));
 
         let arr = br#"[{"score":10},{"score":32}]"#;
-        println!("yyjson sum_field score = {}", YyJson::sum_field(arr, "score"));
+        println!(
+            "yyjson sum_field score = {}",
+            YyJson::sum_field(arr, "score")
+        );
 
         let p = Padded::new(arr);
-        println!("simdjson sum_field     = {}", SimdJson::sum_field(&p, "score"));
+        println!(
+            "simdjson sum_field     = {}",
+            SimdJson::sum_field(&p, "score")
+        );
         println!("simdjson ondemand n    = {}", SimdJson::parse_ondemand(&p));
         println!("simdjson validate      = {}", SimdJson::validate(&p));
     }

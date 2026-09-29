@@ -72,7 +72,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         at >= base && at < base + bytes.len(),
         "expected a borrow into the input"
     );
-    println!("borrowed             name={:?} at input offset {}", row.name, at - base);
+    println!(
+        "borrowed             name={:?} at input offset {}",
+        row.name,
+        at - base
+    );
 
     // --- Parsing many documents --------------------------------------
     let lines: [&[u8]; 3] = [br#"{"status":1}"#, br#"{"status":2}"#, br#"{"status":3}"#];
@@ -109,7 +113,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|r| r.get("name"))
         .and_then(|v| v.as_str());
     assert_eq!(name, Some("alpha"));
-    println!("flat dynamic         {name:?} from a {}-byte buffer", buf.len());
+    println!(
+        "flat dynamic         {name:?} from a {}-byte buffer",
+        buf.len()
+    );
 
     // --- Zero-copy: typed --------------------------------------------
     let mut w = TypedWriter::<Record>::new();
@@ -131,7 +138,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rows: Vec<TypedRow<'_>> = de::from_all(&v)?;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].name, "alpha");
-    println!("flat typed           {:?} in {} bytes", rows[0].name, buf.len());
+    println!(
+        "flat typed           {:?} in {} bytes",
+        rows[0].name,
+        buf.len()
+    );
 
     // Reading a field allocates nothing; see docs/MEMORY.md for the
     // measurement (2 allocations, 36 bytes, for a 10.4 MiB document).

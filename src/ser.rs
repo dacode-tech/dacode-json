@@ -161,7 +161,10 @@ fn escape_mask(chunk: &[u8; 16], solidus: bool) -> u16 {
         // b < 0x20  |  b == '"'  |  b == '\\'
         let mut hit = vorrq_u8(
             vcltq_u8(v, vdupq_n_u8(0x20)),
-            vorrq_u8(vceqq_u8(v, vdupq_n_u8(b'"')), vceqq_u8(v, vdupq_n_u8(b'\\'))),
+            vorrq_u8(
+                vceqq_u8(v, vdupq_n_u8(b'"')),
+                vceqq_u8(v, vdupq_n_u8(b'\\')),
+            ),
         );
         if solidus {
             hit = vorrq_u8(hit, vceqq_u8(v, vdupq_n_u8(b'/')));
@@ -500,11 +503,7 @@ impl<'a, 'b> ser::Serializer for &'b mut Serializer<'a> {
         self.serialize_seq(Some(len))
     }
 
-    fn serialize_tuple_struct(
-        self,
-        _name: &'static str,
-        len: usize,
-    ) -> Result<Compound<'a, 'b>> {
+    fn serialize_tuple_struct(self, _name: &'static str, len: usize) -> Result<Compound<'a, 'b>> {
         self.serialize_seq(Some(len))
     }
 
@@ -690,11 +689,7 @@ impl ser::SerializeMap for Compound<'_, '_> {
 impl ser::SerializeStruct for Compound<'_, '_> {
     type Ok = ();
     type Error = Error;
-    fn serialize_field<T: Serialize + ?Sized>(
-        &mut self,
-        key: &'static str,
-        v: &T,
-    ) -> Result<()> {
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, key: &'static str, v: &T) -> Result<()> {
         // A `RawJson` sentinel carries exactly one field, keyed by `TOKEN`,
         // whose value is the JSON text; splice it verbatim instead of writing
         // `"key":"escaped"`. Guard the key as `serde_json` does, so a struct
@@ -722,11 +717,7 @@ impl ser::SerializeStruct for Compound<'_, '_> {
 impl ser::SerializeStructVariant for Compound<'_, '_> {
     type Ok = ();
     type Error = Error;
-    fn serialize_field<T: Serialize + ?Sized>(
-        &mut self,
-        key: &'static str,
-        v: &T,
-    ) -> Result<()> {
+    fn serialize_field<T: Serialize + ?Sized>(&mut self, key: &'static str, v: &T) -> Result<()> {
         self.comma();
         write_escaped(self.ser.out, key, self.ser.opts);
         self.ser.out.push(b':');
@@ -978,19 +969,10 @@ impl<'c> ser::Serializer for RawEmitter<'c> {
     fn serialize_unit_struct(self, _: &'static str) -> Result<()> {
         Err(err("raw value must be JSON text"))
     }
-    fn serialize_unit_variant(
-        self,
-        _: &'static str,
-        _: u32,
-        _: &'static str,
-    ) -> Result<()> {
+    fn serialize_unit_variant(self, _: &'static str, _: u32, _: &'static str) -> Result<()> {
         Err(err("raw value must be JSON text"))
     }
-    fn serialize_newtype_struct<T: Serialize + ?Sized>(
-        self,
-        _: &'static str,
-        _: &T,
-    ) -> Result<()> {
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(self, _: &'static str, _: &T) -> Result<()> {
         Err(err("raw value must be JSON text"))
     }
     fn serialize_newtype_variant<T: Serialize + ?Sized>(

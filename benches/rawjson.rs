@@ -92,10 +92,10 @@
 //! regression `check_padded_capture` exists to fail on.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use dacode_json::{corpus, ser, RawJson};
 use serde::{Deserialize, Serialize};
 use std::hint::black_box;
 use std::sync::OnceLock;
-use dacode_json::{corpus, ser, RawJson};
 
 const SEED: u64 = 0xA7C5;
 
@@ -301,7 +301,12 @@ fn size_label(bytes: usize) -> String {
 /// Offset of the first byte at which two documents differ, or `None` if they
 /// are identical.
 fn first_difference(a: &str, b: &str) -> Option<usize> {
-    match a.as_bytes().iter().zip(b.as_bytes()).position(|(x, y)| x != y) {
+    match a
+        .as_bytes()
+        .iter()
+        .zip(b.as_bytes())
+        .position(|(x, y)| x != y)
+    {
         Some(i) => Some(i),
         None if a.len() != b.len() => Some(a.len().min(b.len())),
         None => None,
@@ -349,7 +354,10 @@ fn check_fidelity(name: &str, raw: &RawJson, dom: &serde_json::Value, wire: &str
     // `check_padded_capture` is what makes it catchable at all.
     for turn in 0..8 {
         let again = dacode_json::to_string(&event).expect("splice serializes");
-        assert_eq!(again, wire, "{name}: splice is not byte-stable on turn {turn}");
+        assert_eq!(
+            again, wire,
+            "{name}: splice is not byte-stable on turn {turn}"
+        );
     }
 
     // Capture the wire, splice it back out: a fixed point, byte-exact. This is
@@ -526,38 +534,54 @@ fn bench_capture_deserialize(c: &mut Criterion) {
         let wire = case.wire.as_bytes();
         group.throughput(Throughput::Bytes(wire.len() as u64));
 
-        group.bench_with_input(BenchmarkId::new("dacode_json_raw", &case.name), wire, |b, wire| {
-            b.iter(|| {
-                let e: Captured = dacode_json::from_slice(black_box(wire)).expect("de");
-                // Keep the whole event live: the capture is an owned copy, and
-                // black-boxing only its length would let the copy go.
-                let kept = black_box(&e);
-                kept.args.get().len() + kept.seq as usize + kept.ts as usize + kept.kind.len()
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dacode_json_raw", &case.name),
+            wire,
+            |b, wire| {
+                b.iter(|| {
+                    let e: Captured = dacode_json::from_slice(black_box(wire)).expect("de");
+                    // Keep the whole event live: the capture is an owned copy, and
+                    // black-boxing only its length would let the copy go.
+                    let kept = black_box(&e);
+                    kept.args.get().len() + kept.seq as usize + kept.ts as usize + kept.kind.len()
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("dacode_json_dom", &case.name), wire, |b, wire| {
-            b.iter(|| {
-                let e: Parsed = dacode_json::from_slice(black_box(wire)).expect("de");
-                black_box(keep_parsed(&e))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dacode_json_dom", &case.name),
+            wire,
+            |b, wire| {
+                b.iter(|| {
+                    let e: Parsed = dacode_json::from_slice(black_box(wire)).expect("de");
+                    black_box(keep_parsed(&e))
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("dacode_json_ignored", &case.name), wire, |b, wire| {
-            b.iter(|| {
-                let e: PrefixOnly = dacode_json::from_slice(black_box(wire)).expect("de");
-                black_box(e.seq as usize + e.ts as usize + e.kind.len())
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dacode_json_ignored", &case.name),
+            wire,
+            |b, wire| {
+                b.iter(|| {
+                    let e: PrefixOnly = dacode_json::from_slice(black_box(wire)).expect("de");
+                    black_box(e.seq as usize + e.ts as usize + e.kind.len())
+                });
+            },
+        );
 
         // The reference rows. `serde_json` has no splice counterpart here —
         // its `RawValue` needs the `raw_value` feature, which is off.
-        group.bench_with_input(BenchmarkId::new("serde_json_dom", &case.name), wire, |b, wire| {
-            b.iter(|| {
-                let e: Parsed = serde_json::from_slice(black_box(wire)).expect("de");
-                black_box(keep_parsed(&e))
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("serde_json_dom", &case.name),
+            wire,
+            |b, wire| {
+                b.iter(|| {
+                    let e: Parsed = serde_json::from_slice(black_box(wire)).expect("de");
+                    black_box(keep_parsed(&e))
+                });
+            },
+        );
 
         group.bench_with_input(
             BenchmarkId::new("serde_json_ignored", &case.name),

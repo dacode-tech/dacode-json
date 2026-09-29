@@ -111,9 +111,7 @@ pub fn parse_number_leading(input: &[u8]) -> i64 {
     let mut result: i64 = 0;
     while let Some(&b) = input.get(pos) {
         if b.is_ascii_digit() {
-            result = result
-                .wrapping_mul(10)
-                .wrapping_add(i64::from(b - b'0'));
+            result = result.wrapping_mul(10).wrapping_add(i64::from(b - b'0'));
             pos += 1;
         } else {
             break;
@@ -148,7 +146,9 @@ pub fn validate_string_leading(input: &[u8]) -> bool {
     pos += 1;
 
     while pos < len {
-        let Some(&b) = input.get(pos) else { return false };
+        let Some(&b) = input.get(pos) else {
+            return false;
+        };
         if b == b'"' {
             return true;
         }

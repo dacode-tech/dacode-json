@@ -79,7 +79,9 @@ fn skip_string(input: &[u8], pos: usize) -> usize {
     // one place in this parser where a vector scan pays, because they are
     // long enough to amortise it.
     while p + 16 <= len {
-        let Some(chunk) = input.get(p..p + 16) else { break };
+        let Some(chunk) = input.get(p..p + 16) else {
+            break;
+        };
         let mut hit = 16usize;
         for (k, &b) in chunk.iter().enumerate() {
             if b == b'"' || b == b'\\' {
@@ -177,9 +179,7 @@ impl Ctx {
     #[inline]
     fn in_object(&self, pool: &Pool) -> bool {
         match self.levels.last() {
-            Some(l) => {
-                pool.node(l.node_idx as usize).map(|n| n.typ()) == Some(Type::Object)
-            }
+            Some(l) => pool.node(l.node_idx as usize).map(|n| n.typ()) == Some(Type::Object),
             None => false,
         }
     }
@@ -432,8 +432,18 @@ mod tests {
     #[test]
     fn no_panic_on_garbage() {
         for s in [
-            &b"{"[..], b"}", b"[", b"]", b"[,]", b"{,}", br#"{"a""#, br#"{"a":"#,
-            b"\"unterminated", b"\\\\\\", b"[[[[[[", b"}}}}",
+            &b"{"[..],
+            b"}",
+            b"[",
+            b"]",
+            b"[,]",
+            b"{,}",
+            br#"{"a""#,
+            br#"{"a":"#,
+            b"\"unterminated",
+            b"\\\\\\",
+            b"[[[[[[",
+            b"}}}}",
         ] {
             let _ = nodes(&String::from_utf8_lossy(s));
         }

@@ -487,12 +487,7 @@ mod tests {
     #[test]
     fn builder_reuse_matches_one_shot() {
         let mut b = TapeBuilder::with_capacity(64);
-        for src in [
-            &br#"{"a":1}"#[..],
-            b"[1,2,3]",
-            br#"{"x":{"y":[1]}}"#,
-            b"[]",
-        ] {
+        for src in [&br#"{"a":1}"#[..], b"[1,2,3]", br#"{"x":{"y":[1]}}"#, b"[]"] {
             let reused: Vec<Entry> = b.build(src).entries().to_vec();
             let fresh: Vec<Entry> = Tape::build(src).entries().to_vec();
             assert_eq!(reused, fresh, "{:?}", String::from_utf8_lossy(src));

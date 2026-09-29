@@ -18,13 +18,11 @@
 //! `docs/RESULTS.md` §3 covers.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
 use dacode_json::corpus;
-use dacode_json::tiers::{
-    tier0::Tier0, tier1::Tier1, tier2::Tier2, tier3::Tier3, JsonTier,
-};
 use dacode_json::tiers::tier2::Tier2Cached;
+use dacode_json::tiers::{tier0::Tier0, tier1::Tier1, tier2::Tier2, tier3::Tier3, JsonTier};
 use dacode_json::Workspace;
+use std::hint::black_box;
 
 const SEED: u64 = 0x71E45;
 
@@ -112,8 +110,7 @@ fn bench_object_get(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("serde_json", name), src, |b, src| {
             b.iter(|| {
-                let v: serde_json::Value =
-                    serde_json::from_slice(black_box(src)).expect("valid");
+                let v: serde_json::Value = serde_json::from_slice(black_box(src)).expect("valid");
                 black_box(v.get(&key).is_some())
             });
         });
@@ -281,9 +278,13 @@ fn bench_dom_build(c: &mut Criterion) {
             });
         });
         let _ = tape_fresh.build(src);
-        group.bench_with_input(BenchmarkId::new("tier2_tape_reused", name), src, |b, src| {
-            b.iter(|| black_box(tape_fresh.build(black_box(src)).len()));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("tier2_tape_reused", name),
+            src,
+            |b, src| {
+                b.iter(|| black_box(tape_fresh.build(black_box(src)).len()));
+            },
+        );
 
         group.bench_with_input(BenchmarkId::new("tier3_pool_fresh", name), src, |b, src| {
             b.iter(|| black_box(dacode_json::parse_to_pool(black_box(src)).len()));
@@ -291,9 +292,13 @@ fn bench_dom_build(c: &mut Criterion) {
 
         let mut ws = Workspace::with_capacity(src.len());
         let _ = ws.parse(src);
-        group.bench_with_input(BenchmarkId::new("tier3_pool_reused", name), src, |b, src| {
-            b.iter(|| black_box(ws.parse(black_box(src)).pool().len()));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("tier3_pool_reused", name),
+            src,
+            |b, src| {
+                b.iter(|| black_box(ws.parse(black_box(src)).pool().len()));
+            },
+        );
     }
 
     group.finish();

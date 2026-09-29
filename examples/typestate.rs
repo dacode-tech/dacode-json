@@ -267,7 +267,9 @@ fn load(port_text: &str, doc: &[u8]) -> Result<String, AppError> {
     let port = Port::new(raw).ok_or(AppError::BadPort(raw))?;
 
     let mut parser = dacode_json::strict::StrictParser::new();
-    let parsed = parser.parse(doc).map_err(|e| AppError::Json(e.to_string()))?;
+    let parsed = parser
+        .parse(doc)
+        .map_err(|e| AppError::Json(e.to_string()))?;
 
     let name = parsed
         .root()
@@ -304,7 +306,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conn = ConnBuilder::new().port(9000).host("db.internal").build();
     println!("2.  typestate        : {conn:?}");
 
-    let conn2 = Conn2::new().host("db.internal").port(9000).timeout(250).build();
+    let conn2 = Conn2::new()
+        .host("db.internal")
+        .port(9000)
+        .timeout(250)
+        .build();
     println!("2b. typestate + data : {conn2:?}");
 
     // This is the payoff. Uncomment either line and the crate stops
@@ -316,11 +322,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Not a runtime panic. Not a `Result` the caller might `unwrap`. A
     // compile error.
 
-    println!("3.  refinement       : {}", bind(Port::new(8080).ok_or("bad port")?));
+    println!(
+        "3.  refinement       : {}",
+        bind(Port::new(8080).ok_or("bad port")?)
+    );
     println!("    rejected         : {:?}", Port::new(80));
 
-    println!("4.  edge conversion  : {}", load("8080", br#"{"name":"svc"}"#)?);
-    println!("    error path       : {:?}", load("80", br#"{"name":"svc"}"#));
+    println!(
+        "4.  edge conversion  : {}",
+        load("8080", br#"{"name":"svc"}"#)?
+    );
+    println!(
+        "    error path       : {:?}",
+        load("80", br#"{"name":"svc"}"#)
+    );
     println!("    error path       : {:?}", load("8080", b"{oops").err());
 
     println!("5.  closures + ?     : {:?}", parse_all(&["1024", "8080"])?);

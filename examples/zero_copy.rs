@@ -54,7 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let buf = flat::encode(p.parse(JSON.as_bytes())?)?;
 
     println!("json      {} bytes", JSON.len());
-    println!("flat      {} bytes  ({:.2}x)", buf.len(), buf.len() as f64 / JSON.len() as f64);
+    println!(
+        "flat      {} bytes  ({:.2}x)",
+        buf.len(),
+        buf.len() as f64 / JSON.len() as f64
+    );
 
     // Opening is O(1). No parsing happens here — the header is checked
     // and the buffer is used in place.
@@ -77,12 +81,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Typed: both ends know the schema
     // =================================================================
     let mut w = TypedWriter::<Sensor>::new();
-    w.record().u64(1).i64(214).bool(true).str("north-inlet").str("field-a").str_list(["inlet"]);
-    w.record().u64(2).i64(-8).bool(false).str("south-inlet").str("field-a").str_list([]);
-    w.record().u64(3).i64(991).bool(true).str("turbine-3").str("field-b").str_list(["hot", "watch"]);
+    w.record()
+        .u64(1)
+        .i64(214)
+        .bool(true)
+        .str("north-inlet")
+        .str("field-a")
+        .str_list(["inlet"]);
+    w.record()
+        .u64(2)
+        .i64(-8)
+        .bool(false)
+        .str("south-inlet")
+        .str("field-a")
+        .str_list([]);
+    w.record()
+        .u64(3)
+        .i64(991)
+        .bool(true)
+        .str("turbine-3")
+        .str("field-b")
+        .str_list(["hot", "watch"]);
     let tbuf = w.finish();
 
-    println!("\ntyped     {} bytes  ({:.2}x the JSON)", tbuf.len(), tbuf.len() as f64 / JSON.len() as f64);
+    println!(
+        "\ntyped     {} bytes  ({:.2}x the JSON)",
+        tbuf.len(),
+        tbuf.len() as f64 / JSON.len() as f64
+    );
 
     let v = TypedView::<Sensor>::new(&tbuf)?;
     println!("rows      {}", v.len());
@@ -95,11 +121,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Straight into structs, still borrowing from the buffer.
     let rows: Vec<SensorRow<'_>> = de::from_all(&v)?;
-    println!("as structs {:?}", rows.iter().map(|r| r.name).collect::<Vec<_>>());
+    println!(
+        "as structs {:?}",
+        rows.iter().map(|r| r.name).collect::<Vec<_>>()
+    );
 
     // The schema is checked on open, so reading with the wrong layout is
     // an error rather than silent garbage.
-    println!("wrong schema {:?}", TypedView::<Sensor>::new(&buf).err().is_some());
+    println!(
+        "wrong schema {:?}",
+        TypedView::<Sensor>::new(&buf).err().is_some()
+    );
 
     // =================================================================
     // 3. Why bother: re-reading
@@ -124,7 +156,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nread one field, {N} times (debug build unless --release):");
     println!("  flat::typed  {flat_ns:>9.1} ns/op");
-    println!("  serde_json   {json_ns:>9.1} ns/op   ({:.0}x slower)", json_ns / flat_ns.max(1e-9));
+    println!(
+        "  serde_json   {json_ns:>9.1} ns/op   ({:.0}x slower)",
+        json_ns / flat_ns.max(1e-9)
+    );
     assert_eq!(acc, acc2, "the two paths must agree");
 
     println!("\nrun with --release for numbers worth quoting");

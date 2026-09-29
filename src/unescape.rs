@@ -117,7 +117,9 @@ fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<alloc::borrow::Cow
     if !backslash {
         if !high {
             // SAFETY: as in `borrow_inner` — all-ASCII is valid UTF-8.
-            return Some(Cow::Borrowed(unsafe { core::str::from_utf8_unchecked(raw) }));
+            return Some(Cow::Borrowed(unsafe {
+                core::str::from_utf8_unchecked(raw)
+            }));
         }
         return core::str::from_utf8(raw).ok().map(Cow::Borrowed);
     }
@@ -162,9 +164,8 @@ fn unescape_inner(raw: &[u8], reject_control: bool) -> Option<alloc::borrow::Cow
                         return None;
                     }
                     i += 6;
-                    let cp = 0x1_0000u32
-                        + ((u32::from(hi) - 0xD800) << 10)
-                        + (u32::from(lo) - 0xDC00);
+                    let cp =
+                        0x1_0000u32 + ((u32::from(hi) - 0xD800) << 10) + (u32::from(lo) - 0xDC00);
                     char::from_u32(cp)?
                 } else {
                     char::from_u32(u32::from(hi))?

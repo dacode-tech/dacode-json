@@ -14,13 +14,15 @@
 //! mechanically translated — both are table-driven C macros whose
 //! assertions do not carry over meaningfully.
 
-use std::fs;
-use std::path::Path;
 use dacode_json::strict::{self, ErrorKind, StrictParser};
 use dacode_json::{de, ser};
+use std::fs;
+use std::path::Path;
 
 fn testdata(sub: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(sub)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(sub)
 }
 
 // =====================================================================
@@ -63,7 +65,10 @@ fn utf8_bom_is_rejected() {
     // EF BB BF then a valid document.
     let mut buf = vec![0xEF, 0xBB, 0xBF];
     buf.extend_from_slice(br#"{"a":1}"#);
-    assert!(strict::validate(&buf).is_err(), "a BOM is not JSON whitespace");
+    assert!(
+        strict::validate(&buf).is_err(),
+        "a BOM is not JSON whitespace"
+    );
     // Without it, the same bytes are fine.
     assert!(strict::validate(&buf[3..]).is_ok());
 }
@@ -71,12 +76,12 @@ fn utf8_bom_is_rejected() {
 #[test]
 fn invalid_utf8_in_strings_is_rejected() {
     for bad in [
-        &b"[\"\xff\"]"[..],           // lone 0xFF
-        b"[\"\xc0\x80\"]",            // overlong NUL
-        b"[\"\xed\xa0\x80\"]",        // UTF-8-encoded surrogate
-        b"[\"\xe2\x28\xa1\"]",        // invalid continuation
+        &b"[\"\xff\"]"[..],            // lone 0xFF
+        b"[\"\xc0\x80\"]",             // overlong NUL
+        b"[\"\xed\xa0\x80\"]",         // UTF-8-encoded surrogate
+        b"[\"\xe2\x28\xa1\"]",         // invalid continuation
         b"[\"\xf8\xa1\xa1\xa1\xa1\"]", // 5-byte sequence
-        b"[\"abc\xc3\"]",             // truncated 2-byte sequence
+        b"[\"abc\xc3\"]",              // truncated 2-byte sequence
     ] {
         assert!(
             strict::validate(bad).is_err(),
@@ -96,8 +101,7 @@ fn valid_multibyte_utf8_is_accepted() {
         r#"["\ud83d\ude00"]"#,
         r#"{"é":"中"}"#,
     ] {
-        strict::validate(good.as_bytes())
-            .unwrap_or_else(|e| panic!("should accept {good}: {e}"));
+        strict::validate(good.as_bytes()).unwrap_or_else(|e| panic!("should accept {good}: {e}"));
     }
 }
 
@@ -110,8 +114,7 @@ fn only_the_four_whitespace_characters_are_allowed() {
     // RFC 8259 §2: space, tab, LF, CR. Nothing else.
     for ws in [" ", "\t", "\n", "\r", " \t\r\n "] {
         let doc = format!("{ws}[{ws}1{ws},{ws}2{ws}]{ws}");
-        strict::validate(doc.as_bytes())
-            .unwrap_or_else(|e| panic!("should accept {doc:?}: {e}"));
+        strict::validate(doc.as_bytes()).unwrap_or_else(|e| panic!("should accept {doc:?}: {e}"));
     }
     // Form feed, vertical tab, NUL, NBSP and Unicode spaces are not.
     for bad in ["\x0c", "\x0b", "\0", "\u{a0}", "\u{2028}", "\u{feff}"] {
@@ -166,8 +169,14 @@ fn every_prefix_of_a_valid_document_is_rejected() {
 #[test]
 fn trailing_content_is_rejected() {
     for s in [
-        r#"{} {}"#, r#"[1][2]"#, "1 2", "null null", r#""a" "b""#,
-        r#"{"a":1}x"#, "[1],", "{}\0",
+        r#"{} {}"#,
+        r#"[1][2]"#,
+        "1 2",
+        "null null",
+        r#""a" "b""#,
+        r#"{"a":1}x"#,
+        "[1],",
+        "{}\0",
     ] {
         assert!(
             strict::validate(s.as_bytes()).is_err(),
@@ -184,15 +193,25 @@ fn trailing_content_is_rejected() {
 fn integer_boundaries_are_exact() {
     let mut p = StrictParser::new();
     for v in [
-        0i64, 1, -1, 42, -42,
-        i64::MAX, i64::MIN,
-        i64::MAX - 1, i64::MIN + 1,
-        i32::MAX as i64, i32::MIN as i64,
-        (1i64 << 53), -(1i64 << 53),      // f64 exact-integer limit
-        (1i64 << 53) + 1,                 // first integer f64 cannot hold
+        0i64,
+        1,
+        -1,
+        42,
+        -42,
+        i64::MAX,
+        i64::MIN,
+        i64::MAX - 1,
+        i64::MIN + 1,
+        i32::MAX as i64,
+        i32::MIN as i64,
+        (1i64 << 53),
+        -(1i64 << 53),    // f64 exact-integer limit
+        (1i64 << 53) + 1, // first integer f64 cannot hold
     ] {
         let lit = v.to_string();
-        let doc = p.parse(lit.as_bytes()).unwrap_or_else(|e| panic!("{lit}: {e}"));
+        let doc = p
+            .parse(lit.as_bytes())
+            .unwrap_or_else(|e| panic!("{lit}: {e}"));
         assert_eq!(doc.root().as_i64(), Some(v), "on {lit}");
     }
 }
@@ -201,16 +220,25 @@ fn integer_boundaries_are_exact() {
 fn values_beyond_i64_become_floats() {
     let mut p = StrictParser::new();
     for lit in [
-        "9223372036854775808",             // i64::MAX + 1
-        "18446744073709551615",            // u64::MAX
-        "-9223372036854775809",            // i64::MIN - 1
+        "9223372036854775808",  // i64::MAX + 1
+        "18446744073709551615", // u64::MAX
+        "-9223372036854775809", // i64::MIN - 1
         "123456789012345678901234567890",
     ] {
-        let doc = p.parse(lit.as_bytes()).unwrap_or_else(|e| panic!("{lit}: {e}"));
+        let doc = p
+            .parse(lit.as_bytes())
+            .unwrap_or_else(|e| panic!("{lit}: {e}"));
         assert_eq!(doc.root().as_i64(), None, "{lit} should not be an i64");
-        let ours = doc.root().as_f64().unwrap_or_else(|| panic!("{lit} not a float"));
+        let ours = doc
+            .root()
+            .as_f64()
+            .unwrap_or_else(|| panic!("{lit} not a float"));
         // Must be correctly rounded.
-        assert_eq!(ours.to_bits(), lit.parse::<f64>().expect("ref").to_bits(), "on {lit}");
+        assert_eq!(
+            ours.to_bits(),
+            lit.parse::<f64>().expect("ref").to_bits(),
+            "on {lit}"
+        );
     }
 }
 
@@ -218,14 +246,29 @@ fn values_beyond_i64_become_floats() {
 fn float_boundaries() {
     let mut p = StrictParser::new();
     for lit in [
-        "0.0", "-0.0", "1.0", "-1.5", "3.141592653589793",
-        "1e308", "-1e308", "5e-324",       // f64::MAX-ish, smallest subnormal
-        "2.2250738585072014e-308",         // smallest normal
-        "1.7976931348623157e308",          // f64::MAX
-        "0e0", "0E0", "0.0e0", "1e+3", "1E-3",
+        "0.0",
+        "-0.0",
+        "1.0",
+        "-1.5",
+        "3.141592653589793",
+        "1e308",
+        "-1e308",
+        "5e-324",                  // f64::MAX-ish, smallest subnormal
+        "2.2250738585072014e-308", // smallest normal
+        "1.7976931348623157e308",  // f64::MAX
+        "0e0",
+        "0E0",
+        "0.0e0",
+        "1e+3",
+        "1E-3",
     ] {
-        let doc = p.parse(lit.as_bytes()).unwrap_or_else(|e| panic!("{lit}: {e}"));
-        let ours = doc.root().as_f64().unwrap_or_else(|| panic!("{lit} not numeric"));
+        let doc = p
+            .parse(lit.as_bytes())
+            .unwrap_or_else(|e| panic!("{lit}: {e}"));
+        let ours = doc
+            .root()
+            .as_f64()
+            .unwrap_or_else(|| panic!("{lit} not numeric"));
         assert_eq!(
             ours.to_bits(),
             lit.parse::<f64>().expect("ref").to_bits(),
@@ -261,9 +304,28 @@ fn negative_zero_keeps_its_sign() {
 #[test]
 fn malformed_number_grammar() {
     for lit in [
-        "01", "-01", "00", "1.", ".1", "-", "+1", "1e", "1e+", "1.e3",
-        "0x10", "1..2", "--1", "1e1e1", "Infinity", "-Infinity", "NaN",
-        "1_000", "0b101", ".", "-.5", "1.2.3",
+        "01",
+        "-01",
+        "00",
+        "1.",
+        ".1",
+        "-",
+        "+1",
+        "1e",
+        "1e+",
+        "1.e3",
+        "0x10",
+        "1..2",
+        "--1",
+        "1e1e1",
+        "Infinity",
+        "-Infinity",
+        "NaN",
+        "1_000",
+        "0b101",
+        ".",
+        "-.5",
+        "1.2.3",
     ] {
         assert!(
             strict::validate(lit.as_bytes()).is_err(),
@@ -290,7 +352,9 @@ fn all_two_character_escapes() {
         (r#""\t""#, "\t"),
     ];
     for (json, want) in cases {
-        let doc = p.parse(json.as_bytes()).unwrap_or_else(|e| panic!("{json}: {e}"));
+        let doc = p
+            .parse(json.as_bytes())
+            .unwrap_or_else(|e| panic!("{json}: {e}"));
         assert_eq!(doc.root().as_str().as_deref(), Some(*want), "on {json}");
     }
 }
@@ -298,9 +362,18 @@ fn all_two_character_escapes() {
 #[test]
 fn invalid_escapes_are_rejected() {
     for s in [
-        r#""\x""#, r#""\a""#, r#""\v""#, r#""\0""#, r#""\ ""#,
-        r#""\u""#, r#""\u0""#, r#""\u00""#, r#""\u000""#, r#""\uZZZZ""#,
-        r#""\u00G0""#, r#""\"#,
+        r#""\x""#,
+        r#""\a""#,
+        r#""\v""#,
+        r#""\0""#,
+        r#""\ ""#,
+        r#""\u""#,
+        r#""\u0""#,
+        r#""\u00""#,
+        r#""\u000""#,
+        r#""\uZZZZ""#,
+        r#""\u00G0""#,
+        r#""\"#,
     ] {
         assert!(strict::validate(s.as_bytes()).is_err(), "should reject {s}");
     }
@@ -316,19 +389,24 @@ fn surrogate_pairs() {
         (r#""\ud800\udc00""#, "\u{10000}"),
         (r#""\udbff\udfff""#, "\u{10FFFF}"),
     ] {
-        let doc = p.parse(json.as_bytes()).unwrap_or_else(|e| panic!("{json}: {e}"));
+        let doc = p
+            .parse(json.as_bytes())
+            .unwrap_or_else(|e| panic!("{json}: {e}"));
         assert_eq!(doc.root().as_str().as_deref(), Some(want), "on {json}");
     }
     // Lone or mispaired surrogates are not.
     for bad in [
-        r#""\ud800""#,          // high, unpaired
-        r#""\udc00""#,          // low, unpaired
-        r#""\ud800\ud800""#,    // high followed by high
-        r#""\udc00\udc00""#,    // low followed by low
-        r#""\ud800x""#,         // high followed by a normal character
-        r#""\ud800\u0041""#,    // high followed by a non-surrogate escape
+        r#""\ud800""#,       // high, unpaired
+        r#""\udc00""#,       // low, unpaired
+        r#""\ud800\ud800""#, // high followed by high
+        r#""\udc00\udc00""#, // low followed by low
+        r#""\ud800x""#,      // high followed by a normal character
+        r#""\ud800\u0041""#, // high followed by a non-surrogate escape
     ] {
-        assert!(strict::validate(bad.as_bytes()).is_err(), "should reject {bad}");
+        assert!(
+            strict::validate(bad.as_bytes()).is_err(),
+            "should reject {bad}"
+        );
     }
 }
 
@@ -351,7 +429,9 @@ fn escaped_control_characters_are_accepted() {
     let mut p = StrictParser::new();
     for c in 0u8..0x20 {
         let doc = format!(r#""a\u{c:04x}b""#);
-        let parsed = p.parse(doc.as_bytes()).unwrap_or_else(|e| panic!("{doc}: {e}"));
+        let parsed = p
+            .parse(doc.as_bytes())
+            .unwrap_or_else(|e| panic!("{doc}: {e}"));
         let s = parsed.root().as_str().expect("string");
         assert_eq!(s.chars().count(), 3, "on {doc}");
         assert_eq!(s.chars().nth(1), Some(c as char), "on {doc}");
@@ -378,14 +458,19 @@ fn embedded_nul_survives_a_round_trip() {
 #[test]
 fn empty_and_long_strings() {
     let mut p = StrictParser::new();
-    assert_eq!(p.parse(br#""""#).expect("valid").root().as_str().as_deref(), Some(""));
+    assert_eq!(
+        p.parse(br#""""#).expect("valid").root().as_str().as_deref(),
+        Some("")
+    );
 
     // Long enough to cross every SIMD chunk boundary in the scanner and
     // the escaper.
     for n in [15usize, 16, 17, 31, 32, 33, 63, 64, 65, 1000] {
         let s = "x".repeat(n);
         let json = format!("\"{s}\"");
-        let doc = p.parse(json.as_bytes()).unwrap_or_else(|e| panic!("len {n}: {e}"));
+        let doc = p
+            .parse(json.as_bytes())
+            .unwrap_or_else(|e| panic!("len {n}: {e}"));
         assert_eq!(doc.root().as_str().as_deref(), Some(s.as_str()), "len {n}");
     }
 }
@@ -397,8 +482,15 @@ fn empty_and_long_strings() {
 #[test]
 fn empty_and_nested_containers() {
     for s in [
-        "{}", "[]", "[[]]", "[{}]", "{\"a\":{}}", "{\"a\":[]}",
-        "[[],[]]", "[{},{}]", "[[[[[[[[[[]]]]]]]]]]",
+        "{}",
+        "[]",
+        "[[]]",
+        "[{}]",
+        "{\"a\":{}}",
+        "{\"a\":[]}",
+        "[[],[]]",
+        "[{},{}]",
+        "[[[[[[[[[[]]]]]]]]]]",
     ] {
         strict::validate(s.as_bytes()).unwrap_or_else(|e| panic!("{s}: {e}"));
     }
@@ -446,10 +538,24 @@ fn deep_nesting_is_bounded_not_crashing() {
 #[test]
 fn unbalanced_brackets_of_every_shape() {
     for s in [
-        "[", "]", "{", "}", "[}", "{]", "[{]}", "{[}]",
-        "[[]", "[]]", "{\"a\":1", "{\"a\":1]}", "[1,2}",
+        "[",
+        "]",
+        "{",
+        "}",
+        "[}",
+        "{]",
+        "[{]}",
+        "{[}]",
+        "[[]",
+        "[]]",
+        "{\"a\":1",
+        "{\"a\":1]}",
+        "[1,2}",
     ] {
-        assert!(strict::validate(s.as_bytes()).is_err(), "should reject {s:?}");
+        assert!(
+            strict::validate(s.as_bytes()).is_err(),
+            "should reject {s:?}"
+        );
     }
 }
 
@@ -466,14 +572,18 @@ fn roundtrip_is_a_fixed_point() {
         r#"{"":"","a":{"b":{"c":[[[]]]}}}"#,
     ];
     for doc in docs {
-        let v: serde_json::Value = de::from_slice(doc.as_bytes())
-            .unwrap_or_else(|e| panic!("{doc}: {e}"));
+        let v: serde_json::Value =
+            de::from_slice(doc.as_bytes()).unwrap_or_else(|e| panic!("{doc}: {e}"));
         let once = ser::to_string(&v).unwrap_or_else(|e| panic!("{doc}: {e}"));
-        let back: serde_json::Value = de::from_slice(once.as_bytes())
-            .unwrap_or_else(|e| panic!("reparse {once}: {e}"));
+        let back: serde_json::Value =
+            de::from_slice(once.as_bytes()).unwrap_or_else(|e| panic!("reparse {once}: {e}"));
         let twice = ser::to_string(&back).expect("re-serialize");
         assert_eq!(once, twice, "not idempotent for {doc}");
         // And byte-identical to serde_json's rendering of the same tree.
-        assert_eq!(once, serde_json::to_string(&v).expect("serde_json"), "on {doc}");
+        assert_eq!(
+            once,
+            serde_json::to_string(&v).expect("serde_json"),
+            "on {doc}"
+        );
     }
 }

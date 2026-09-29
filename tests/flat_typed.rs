@@ -439,9 +439,9 @@ fn typed_is_smaller_than_dynamic() {
 #[cfg(feature = "serde")]
 mod serde_bridge {
     use super::{Record, RecordFields};
-    use serde::Deserialize;
     use dacode_json::corpus;
     use dacode_json::flat::typed::{de, TypedView, TypedWriter};
+    use serde::Deserialize;
 
     /// Borrowing form: every string points into the buffer.
     #[derive(Debug, Deserialize, PartialEq)]
@@ -609,7 +609,11 @@ mod serde_bridge {
             assert_eq!(got[i].id, r["id"].as_u64().unwrap_or(0), "id {i}");
             assert_eq!(got[i].name, r["name"].as_str().unwrap_or(""), "name {i}");
             assert_eq!(got[i].score, r["score"].as_i64().unwrap_or(0), "score {i}");
-            assert_eq!(got[i].active, r["active"].as_bool().unwrap_or(false), "active {i}");
+            assert_eq!(
+                got[i].active,
+                r["active"].as_bool().unwrap_or(false),
+                "active {i}"
+            );
         }
         // Silence the unused-import warning for the accessor trait.
         let _ = v.name(0);

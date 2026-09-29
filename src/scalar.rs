@@ -112,9 +112,7 @@ pub fn parse_number(input: &[u8], from: usize, to: usize) -> i64 {
         let Some(&b) = input.get(p) else { break };
         match b {
             b'0'..=b'9' => {
-                acc = acc
-                    .wrapping_mul(10)
-                    .wrapping_add(i64::from(b - b'0'));
+                acc = acc.wrapping_mul(10).wrapping_add(i64::from(b - b'0'));
                 p += 1;
             }
             // Float syntax is skipped, not parsed. This is the lossy bit.

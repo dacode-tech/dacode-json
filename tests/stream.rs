@@ -12,7 +12,9 @@ use serde::Deserialize;
 use serde_json::Value as JValue;
 
 fn testdata(sub: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(sub)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(sub)
 }
 
 fn load_dir(sub: &str) -> Vec<(String, Vec<u8>)> {
@@ -41,21 +43,22 @@ fn agrees_with_serde_json_on_every_corpus_file() {
     let mut checked = 0usize;
     let mut disagreements = Vec::new();
 
-    for sub in ["test_parsing", "test_transform", "JSON_checker", "test_encoding"] {
+    for sub in [
+        "test_parsing",
+        "test_transform",
+        "JSON_checker",
+        "test_encoding",
+    ] {
         for (name, bytes) in load_dir(sub) {
             let theirs = serde_json::from_slice::<JValue>(&bytes).is_ok();
             let ours = dacode_json::stream::from_slice::<JValue>(&bytes).is_ok();
             let direct = dacode_json::direct::from_slice::<JValue>(&bytes).is_ok();
             checked += 1;
             if theirs != ours {
-                disagreements.push(format!(
-                    "{sub}/{name}: serde_json={theirs} stream={ours}"
-                ));
+                disagreements.push(format!("{sub}/{name}: serde_json={theirs} stream={ours}"));
             }
             if theirs != direct {
-                disagreements.push(format!(
-                    "{sub}/{name}: serde_json={theirs} direct={direct}"
-                ));
+                disagreements.push(format!("{sub}/{name}: serde_json={theirs} direct={direct}"));
             }
         }
     }
@@ -253,7 +256,10 @@ fn malformed_skipped_values_are_still_rejected() {
         let direct = dacode_json::direct::from_slice::<Partial>(case.as_bytes()).is_ok();
         assert!(!theirs, "serde_json accepted {case}, fix the test");
         assert_eq!(ours, theirs, "disagreement on skipped-field case: {case}");
-        assert_eq!(direct, theirs, "direct disagrees on skipped-field case: {case}");
+        assert_eq!(
+            direct, theirs,
+            "direct disagrees on skipped-field case: {case}"
+        );
     }
 }
 
@@ -261,16 +267,28 @@ fn malformed_skipped_values_are_still_rejected() {
 #[test]
 fn number_edges_match_serde_json() {
     let cases: &[&str] = &[
-        "0", "-0", "1", "-1", "1e2", "1E2", "1e+2", "1e-2", "0.5", "-0.5",
-        "9223372036854775807",   // i64::MAX
-        "-9223372036854775808",  // i64::MIN
-        "18446744073709551615",  // u64::MAX
-        "18446744073709551616",  // u64::MAX + 1, becomes a float
+        "0",
+        "-0",
+        "1",
+        "-1",
+        "1e2",
+        "1E2",
+        "1e+2",
+        "1e-2",
+        "0.5",
+        "-0.5",
+        "9223372036854775807",  // i64::MAX
+        "-9223372036854775808", // i64::MIN
+        "18446744073709551615", // u64::MAX
+        "18446744073709551616", // u64::MAX + 1, becomes a float
         "1.7976931348623157e308",
         "5e-324",
         "1e400",
         "123456789012345678901234567890",
-        "0.1", "0.3", "1e-7", "3.141592653589793",
+        "0.1",
+        "0.3",
+        "1e-7",
+        "3.141592653589793",
     ];
     for case in cases {
         let theirs = serde_json::from_str::<JValue>(case);
@@ -367,7 +385,12 @@ fn ascii_parser_agrees_wherever_it_applies() {
     let mut ascii_files = 0usize;
     let mut rejected_non_ascii = 0usize;
 
-    for sub in ["test_parsing", "test_transform", "JSON_checker", "test_encoding"] {
+    for sub in [
+        "test_parsing",
+        "test_transform",
+        "JSON_checker",
+        "test_encoding",
+    ] {
         for (name, bytes) in load_dir(sub) {
             let general = dacode_json::direct::from_slice::<JValue>(&bytes);
             let ascii = dacode_json::direct::from_slice_ascii::<JValue>(&bytes);
@@ -392,7 +415,10 @@ fn ascii_parser_agrees_wherever_it_applies() {
         }
     }
     assert!(ascii_files > 250, "only {ascii_files} ASCII files");
-    assert!(rejected_non_ascii > 10, "only {rejected_non_ascii} non-ASCII files");
+    assert!(
+        rejected_non_ascii > 10,
+        "only {rejected_non_ascii} non-ASCII files"
+    );
 }
 
 /// `is_ascii` must agree with the obvious byte-at-a-time version at every
@@ -415,7 +441,10 @@ fn is_ascii_matches_a_scalar_scan() {
                 want,
                 "len={len} high byte at {pos}"
             );
-            assert_eq!(dacode_json::direct::is_ascii(&v), v.iter().all(|b| *b < 0x80));
+            assert_eq!(
+                dacode_json::direct::is_ascii(&v),
+                v.iter().all(|b| *b < 0x80)
+            );
         }
     }
 }

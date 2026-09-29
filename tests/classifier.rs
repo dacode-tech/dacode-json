@@ -31,7 +31,11 @@ fn class_table_is_exact_for_all_256_bytes() {
         // The table encodes structural as one of three bits (0x01/0x02/0x04)
         // so that low-nibble groups cannot collide; compare by class, not by
         // raw value.
-        let got_class = (got & M_STRUCTURAL != 0, got & M_QUOTE != 0, got & M_BACKSLASH != 0);
+        let got_class = (
+            got & M_STRUCTURAL != 0,
+            got & M_QUOTE != 0,
+            got & M_BACKSLASH != 0,
+        );
         let want_class = (
             want & M_STRUCTURAL != 0,
             want & M_QUOTE != 0,
@@ -65,7 +69,12 @@ fn near_miss_bytes_classify_to_zero() {
         b'R', b'Z', // hi=5
         b'r', b'z', b'|', // hi=7
     ] {
-        assert_eq!(class_of(b), 0, "{:?} ({b:#04x}) must not classify", b as char);
+        assert_eq!(
+            class_of(b),
+            0,
+            "{:?} ({b:#04x}) must not classify",
+            b as char
+        );
     }
 }
 
@@ -80,7 +89,11 @@ fn all_classifiers_agree_on_every_chunk_of_interest() {
                 *slot = b;
             }
             let reference = classify_scalar(&chunk);
-            assert_eq!(classify(&chunk), reference, "compare, lane {lane}, byte {b:#04x}");
+            assert_eq!(
+                classify(&chunk),
+                reference,
+                "compare, lane {lane}, byte {b:#04x}"
+            );
             assert_eq!(
                 classify_lut256(&chunk),
                 reference,
@@ -150,18 +163,18 @@ fn structural_only_table_is_exact() {
     for b in 0u8..=255 {
         let lo = STRUCT_LO.get((b & 0xF) as usize).copied().unwrap_or(0);
         let hi = STRUCT_HI.get((b >> 4) as usize).copied().unwrap_or(0);
-        assert_eq!(
-            (lo & hi) != 0,
-            want(b),
-            "byte {b:#04x} ({:?})",
-            b as char
-        );
+        assert_eq!((lo & hi) != 0, want(b), "byte {b:#04x} ({:?})", b as char);
     }
     // The two bytes that must NOT be in the structural table.
     for b in *b"\"\\" {
         let lo = STRUCT_LO.get((b & 0xF) as usize).copied().unwrap_or(0);
         let hi = STRUCT_HI.get((b >> 4) as usize).copied().unwrap_or(0);
-        assert_eq!(lo & hi, 0, "{:?} must not be in the structural table", b as char);
+        assert_eq!(
+            lo & hi,
+            0,
+            "{:?} must not be in the structural table",
+            b as char
+        );
     }
 }
 

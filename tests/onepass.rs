@@ -28,7 +28,10 @@ fn agree(src: &[u8]) {
 #[test]
 fn t848_document_shapes() {
     for s in [
-        "{}", "[]", "{ }", "[ ]",
+        "{}",
+        "[]",
+        "{ }",
+        "[ ]",
         r#"{"a":1}"#,
         r#"{"a":1,"b":2}"#,
         r#"{"a":"x"}"#,
@@ -47,8 +50,12 @@ fn t848_document_shapes() {
         r#"{"esc":"a\"b"}"#,
         "[[[[[]]]]]",
         r#"[{"a":[{"b":1}]}]"#,
-        "42", "true", "null", r#""top level string""#,
-        "", "   ",
+        "42",
+        "true",
+        "null",
+        r#""top level string""#,
+        "",
+        "   ",
     ] {
         agree(s.as_bytes());
     }

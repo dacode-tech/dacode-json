@@ -18,7 +18,10 @@ fn flat_object_access() {
 
     assert_eq!(r.typ(), Type::Object);
     assert_eq!(r.len(), 4);
-    assert_eq!(r.get("name").and_then(|v| v.as_str()).as_deref(), Some("vela"));
+    assert_eq!(
+        r.get("name").and_then(|v| v.as_str()).as_deref(),
+        Some("vela")
+    );
     assert_eq!(r.get("n").and_then(|v| v.as_i64()), Some(42));
     assert_eq!(r.get("ok").and_then(|v| v.as_bool()), Some(true));
     assert!(r.get("nil").is_some_and(|v| v.is_null()));
@@ -63,7 +66,12 @@ fn empty_and_singleton_containers() {
         (b"[{}]", 1),
         (b"[[],[]]", 2),
     ] {
-        assert_eq!(w.parse(src).root().len(), len, "{:?}", String::from_utf8_lossy(src));
+        assert_eq!(
+            w.parse(src).root().len(),
+            len,
+            "{:?}",
+            String::from_utf8_lossy(src)
+        );
     }
 }
 

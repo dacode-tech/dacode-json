@@ -308,8 +308,7 @@ impl State<'_> {
             return self.err(offset, ErrorKind::MismatchedBracket);
         }
         let idx = level.node_idx as usize;
-        self.pool
-            .set_tag(idx, typ, u64::from(level.child_count));
+        self.pool.set_tag(idx, typ, u64::from(level.child_count));
         self.pool.set_payload(idx, u64::from(level.first_child));
         self.value_complete();
         Ok(())
@@ -686,8 +685,7 @@ impl State<'_> {
 
                     match self.expect {
                         Expect::Key | Expect::KeyOrClose => {
-                            self.pool
-                                .push(Type::Key, content_len as u64, start as u64);
+                            self.pool.push(Type::Key, content_len as u64, start as u64);
                             self.expect = Expect::Colon;
                         }
                         Expect::Value | Expect::ValueOrClose => {

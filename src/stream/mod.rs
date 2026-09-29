@@ -359,7 +359,10 @@ pub(crate) fn parse_number(input: &[u8], start: usize, end: usize) -> Result<Num
         return Err(Error::at(start, "number out of range"));
     }
 
-    match core::str::from_utf8(s).ok().and_then(|t| t.parse::<f64>().ok()) {
+    match core::str::from_utf8(s)
+        .ok()
+        .and_then(|t| t.parse::<f64>().ok())
+    {
         // `1e400` overflows to infinity. serde_json calls that out of
         // range rather than storing an infinity, so we do too.
         Some(v) if v.is_finite() => Ok(Num::F(v)),

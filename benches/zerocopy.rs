@@ -20,14 +20,14 @@
 //! per-node type tags. The interesting question is by how much.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rkyv::{rancor::Error as RkyvError, Archive, Deserialize as RkyvDe, Serialize as RkyvSer};
-use serde::{Deserialize, Serialize};
-use std::hint::black_box;
 use dacode_json::flat::typed::{TypedView, TypedWriter};
 use dacode_json::flat::{self, View};
 use dacode_json::flat_struct;
 use dacode_json::strict::StrictParser;
 use dacode_json::{corpus, Workspace};
+use rkyv::{rancor::Error as RkyvError, Archive, Deserialize as RkyvDe, Serialize as RkyvSer};
+use serde::{Deserialize, Serialize};
+use std::hint::black_box;
 
 const SEED: u64 = 0x2C0;
 
@@ -164,7 +164,9 @@ fn bench_open(c: &mut Criterion) {
             // SAFETY: the buffer was produced by `encode_rkyv` in this
             // process and is not mutated. This is rkyv's trusted-input
             // path, the counterpart to `jsonflat_header_only`.
-            let a = unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<Record>>>(black_box(&rkyvbuf)) };
+            let a = unsafe {
+                rkyv::access_unchecked::<rkyv::Archived<Vec<Record>>>(black_box(&rkyvbuf))
+            };
             black_box(a.len())
         });
     });
@@ -185,8 +187,8 @@ fn bench_open(c: &mut Criterion) {
 
     group.bench_function("serde_json_parse", |b| {
         b.iter(|| {
-            let v: serde_json::Value = serde_json::from_slice(black_box(json.as_bytes()))
-                .expect("parse");
+            let v: serde_json::Value =
+                serde_json::from_slice(black_box(json.as_bytes())).expect("parse");
             black_box(v)
         });
     });
@@ -230,7 +232,9 @@ fn bench_read_one(c: &mut Criterion) {
     group.bench_function("rkyv_unchecked", |b| {
         b.iter(|| {
             // SAFETY: buffer produced in-process, never mutated.
-            let a = unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<Record>>>(black_box(&rkyvbuf)) };
+            let a = unsafe {
+                rkyv::access_unchecked::<rkyv::Archived<Vec<Record>>>(black_box(&rkyvbuf))
+            };
             black_box(a.first().map(|r| r.score.to_native()))
         });
     });
@@ -251,9 +255,13 @@ fn bench_read_one(c: &mut Criterion) {
 
     group.bench_function("serde_json", |b| {
         b.iter(|| {
-            let v: serde_json::Value = serde_json::from_slice(black_box(json.as_bytes()))
-                .expect("parse");
-            black_box(v.get(0).and_then(|r| r.get("score")).and_then(|s| s.as_i64()))
+            let v: serde_json::Value =
+                serde_json::from_slice(black_box(json.as_bytes())).expect("parse");
+            black_box(
+                v.get(0)
+                    .and_then(|r| r.get("score"))
+                    .and_then(|s| s.as_i64()),
+            )
         });
     });
 
@@ -297,7 +305,9 @@ fn bench_read_all(c: &mut Criterion) {
     group.bench_function("rkyv_unchecked", |b| {
         b.iter(|| {
             // SAFETY: buffer produced in-process, never mutated.
-            let a = unsafe { rkyv::access_unchecked::<rkyv::Archived<Vec<Record>>>(black_box(&rkyvbuf)) };
+            let a = unsafe {
+                rkyv::access_unchecked::<rkyv::Archived<Vec<Record>>>(black_box(&rkyvbuf))
+            };
             let sum: i64 = a.iter().map(|r| r.score.to_native()).sum();
             debug_assert_eq!(sum, want);
             black_box(sum)
@@ -320,8 +330,8 @@ fn bench_read_all(c: &mut Criterion) {
 
     group.bench_function("serde_json", |b| {
         b.iter(|| {
-            let v: serde_json::Value = serde_json::from_slice(black_box(json.as_bytes()))
-                .expect("parse");
+            let v: serde_json::Value =
+                serde_json::from_slice(black_box(json.as_bytes())).expect("parse");
             let sum: i64 = v
                 .as_array()
                 .map(|a| a.iter().filter_map(|r| r.get("score")?.as_i64()).sum())
@@ -412,9 +422,18 @@ fn bench_encode(c: &mut Criterion) {
 
     // Three interning modes plus unsorted, to price each build-time choice.
     for (label, builder) in [
-        ("jsonflat_intern_none", flat::Builder::new().intern(flat::Intern::None)),
-        ("jsonflat_intern_keys", flat::Builder::new().intern(flat::Intern::Keys)),
-        ("jsonflat_intern_all", flat::Builder::new().intern(flat::Intern::All)),
+        (
+            "jsonflat_intern_none",
+            flat::Builder::new().intern(flat::Intern::None),
+        ),
+        (
+            "jsonflat_intern_keys",
+            flat::Builder::new().intern(flat::Intern::Keys),
+        ),
+        (
+            "jsonflat_intern_all",
+            flat::Builder::new().intern(flat::Intern::All),
+        ),
         (
             "jsonflat_unsorted_keys",
             flat::Builder::new()
@@ -432,7 +451,14 @@ fn bench_encode(c: &mut Criterion) {
 
     // The parse alone, so the build cost can be separated from it.
     group.bench_function("strict_parse_only", |b| {
-        b.iter(|| black_box(p.parse(black_box(json.as_bytes())).expect("valid").pool().len()));
+        b.iter(|| {
+            black_box(
+                p.parse(black_box(json.as_bytes()))
+                    .expect("valid")
+                    .pool()
+                    .len(),
+            )
+        });
     });
 
     group.bench_function("jsonflat_typed_from_structs", |b| {
@@ -456,8 +482,8 @@ fn bench_encode(c: &mut Criterion) {
 /// all — the comparison shows what removing the parse step is worth when
 /// the destination is a struct rather than a DOM.
 fn bench_struct_de(c: &mut Criterion) {
-    use serde::Deserialize;
     use dacode_json::flat::typed::de as flat_de;
+    use serde::Deserialize;
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct RowRef<'a> {

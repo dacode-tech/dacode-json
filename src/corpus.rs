@@ -17,7 +17,11 @@ pub struct Rng(u64);
 impl Rng {
     #[must_use]
     pub const fn new(seed: u64) -> Self {
-        Rng(if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed })
+        Rng(if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        })
     }
 
     #[inline]
@@ -239,7 +243,11 @@ pub fn random_value(rng: &mut Rng, max_depth: u32) -> String {
 
 fn write_value(s: &mut String, rng: &mut Rng, depth: u32) {
     // At depth 0 only scalars, so generation always terminates.
-    let choice = if depth == 0 { rng.below(6) } else { rng.below(8) };
+    let choice = if depth == 0 {
+        rng.below(6)
+    } else {
+        rng.below(8)
+    };
     match choice {
         0 => s.push_str("null"),
         1 => s.push_str(if rng.below(2) == 0 { "true" } else { "false" }),

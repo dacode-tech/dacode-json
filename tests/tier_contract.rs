@@ -9,7 +9,6 @@
 //! tiers disagree with each other and with RFC 8259 in several distinct
 //! ways. Each of those is pinned down below rather than glossed over.
 
-use std::collections::BTreeSet;
 use dacode_json::corpus;
 use dacode_json::tiers::{
     tier0::Tier0,
@@ -18,6 +17,7 @@ use dacode_json::tiers::{
     tier3::Tier3,
     JsonTier, Tier, TypeName,
 };
+use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------
 // Scalars: all four tiers share one implementation, so all four must agree
@@ -477,7 +477,10 @@ fn validate_accuracy_against_serde_json() {
 
     for (i, t) in Tier::ALL.iter().enumerate() {
         let pct = 100.0 * agree.get(i).copied().unwrap_or(0) as f64 / total as f64;
-        println!("  {:14} agrees with serde_json on {pct:5.1}% of {total}", t.label());
+        println!(
+            "  {:14} agrees with serde_json on {pct:5.1}% of {total}",
+            t.label()
+        );
     }
 
     // Tier 0 always says false, so it is right only on the invalid ones.

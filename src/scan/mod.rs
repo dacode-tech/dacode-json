@@ -29,7 +29,6 @@ pub mod neon;
 /// blocks of 8/8/16.
 pub const SPILL: usize = 32;
 
-
 /// Vela's hard limit: positions are stored as `i32`.
 ///
 /// `structural.vl:124`, `structural_simd.vl:80`, `parse_indexed.vl:604`.

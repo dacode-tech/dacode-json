@@ -413,7 +413,11 @@ impl<'de> Cur<'de> {
                 self.skip_container()?;
             }
             Kind::Bool => {
-                let want: &[u8] = if self.peek() == b't' { b"true" } else { b"false" };
+                let want: &[u8] = if self.peek() == b't' {
+                    b"true"
+                } else {
+                    b"false"
+                };
                 let end = self.scalar_end();
                 expect_lit(self.input, at, end, want)?;
                 self.pos = end;
@@ -925,9 +929,9 @@ mod tests {
     #[test]
     fn structural_errors_are_still_errors() {
         for bad in [
-            &b"[{\"a\":1}"[..], // unterminated array
-            &b"[{\"a\"}]"[..],  // no colon after a key we read
-            &b"{\"a\":1}"[..],  // not an array
+            &b"[{\"a\":1}"[..],  // unterminated array
+            &b"[{\"a\"}]"[..],   // no colon after a key we read
+            &b"{\"a\":1}"[..],   // not an array
             &b"[{\"a\":1},"[..], // unterminated after a complete object
         ] {
             assert!(
@@ -948,10 +952,10 @@ mod tests {
     #[test]
     fn malformed_content_in_a_skipped_tail_is_accepted() {
         let cases: &[&[u8]] = &[
-            br#"[{"a":1,}]"#,          // trailing comma after what we read
-            br#"[{"a":1,"b":01}]"#,    // invalid number, never converted
-            br#"[{"a":1,"b":tru}]"#,   // invalid literal
-            br#"[{"a":1,"b":"\q"}]"#,  // invalid escape
+            br#"[{"a":1,}]"#,         // trailing comma after what we read
+            br#"[{"a":1,"b":01}]"#,   // invalid number, never converted
+            br#"[{"a":1,"b":tru}]"#,  // invalid literal
+            br#"[{"a":1,"b":"\q"}]"#, // invalid escape
         ];
         for src in cases {
             // serde_json rejects every one of these.

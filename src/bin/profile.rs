@@ -19,10 +19,10 @@
     clippy::exit
 )]
 
-use std::env;
-use std::hint::black_box;
 use dacode_json::strict::StrictParser;
 use dacode_json::{corpus, de, flat, ser, Workspace};
+use std::env;
+use std::hint::black_box;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, PartialEq)]
 struct Record {
@@ -58,20 +58,27 @@ impl std::fmt::Debug for Fatal {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let workload = args.get(1).map(String::as_str).unwrap_or("list");
-    let iters: usize = args
-        .get(2)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(200);
+    let iters: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(200);
 
     let json = corpus::sized(1 << 20, 0x2C0, corpus::records);
     let bytes = json.as_bytes();
 
     let workloads = [
-        "vela_scan", "vela_stage2", "vela_pool", "vela_strict", "vela_de", "vela_ser",
-        "serde_json_value", "serde_json_de", "serde_json_ser",
-        "simd_json_tape", "sonic_de", "flat_encode", "flat_read",
+        "vela_scan",
+        "vela_stage2",
+        "vela_pool",
+        "vela_strict",
+        "vela_de",
+        "vela_ser",
+        "serde_json_value",
+        "serde_json_de",
+        "serde_json_ser",
+        "simd_json_tape",
+        "sonic_de",
+        "flat_encode",
+        "flat_read",
         #[cfg(feature = "cbench")]
-        "yyjson", 
+        "yyjson",
         #[cfg(feature = "cbench")]
         "yyjson_sum",
         #[cfg(feature = "cbench")]

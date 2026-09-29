@@ -7,11 +7,11 @@
 //! so nothing but the builder is timed.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
 use dacode_json::builder::{build_from_index, pool_capacity_for, Stack};
 use dacode_json::corpus;
 use dacode_json::pool::Pool;
 use dacode_json::scan::{scan, Scanner, StructuralIndex};
+use std::hint::black_box;
 
 const SEED: u64 = 0x5CA7;
 
@@ -198,9 +198,13 @@ fn bench_floor(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("walk_dispatch", name), &name, |b, _| {
             b.iter(|| black_box(walk_only(black_box(&input), black_box(&pos))));
         });
-        group.bench_with_input(BenchmarkId::new("walk_preclassified", name), &name, |b, _| {
-            b.iter(|| black_box(walk_preclassified(black_box(&packed))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("walk_preclassified", name),
+            &name,
+            |b, _| {
+                b.iter(|| black_box(walk_preclassified(black_box(&packed))));
+            },
+        );
         let mut q = prepare(&json);
         group.bench_with_input(BenchmarkId::new("real_builder", name), &name, |b, _| {
             b.iter(|| black_box(w_build(&mut q)));
@@ -257,5 +261,11 @@ fn bench_onepass(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_onepass, bench_floor, bench_stage2, bench_split);
+criterion_group!(
+    benches,
+    bench_onepass,
+    bench_floor,
+    bench_stage2,
+    bench_split
+);
 criterion_main!(benches);

@@ -83,7 +83,10 @@ pub fn classify(chunk: &[u8; 16]) -> Classified {
     {
         x86::classify(chunk)
     }
-    #[cfg(not(any(target_arch = "aarch64", all(target_arch = "x86_64", target_feature = "sse2"))))]
+    #[cfg(not(any(
+        target_arch = "aarch64",
+        all(target_arch = "x86_64", target_feature = "sse2")
+    )))]
     {
         classify_scalar(chunk)
     }
@@ -164,7 +167,10 @@ mod x86 {
             let eq = |c: u8| _mm_cmpeq_epi8(v, _mm_set1_epi8(c as i8));
 
             let s = _mm_or_si128(
-                _mm_or_si128(_mm_or_si128(eq(b'{'), eq(b'}')), _mm_or_si128(eq(b'['), eq(b']'))),
+                _mm_or_si128(
+                    _mm_or_si128(eq(b'{'), eq(b'}')),
+                    _mm_or_si128(eq(b'['), eq(b']')),
+                ),
                 _mm_or_si128(eq(b':'), eq(b',')),
             );
 
@@ -261,7 +267,11 @@ fn chunk<C: Classify>(input: &[u8], offset: usize, carry: Carry) -> (u16, Carry)
     let in_string = prefix_xor16(real_quotes) ^ carry.str_;
 
     // simdjson broadcasts bit 15 by arithmetic shift; Vela spells it out.
-    let str_carry = if (in_string >> 15) & 1 != 0 { 0xFFFF } else { 0 };
+    let str_carry = if (in_string >> 15) & 1 != 0 {
+        0xFFFF
+    } else {
+        0
+    };
 
     // Step 5: quotes are always emitted; other structurals only outside
     // strings.

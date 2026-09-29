@@ -36,11 +36,11 @@
 //! | `simdjson` on-demand | yes | full | on request | yes | no (needs padding) |
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
 use dacode_json::cbench::{Padded, SimdJson, YyJson, YyPool};
 use dacode_json::corpus;
 use dacode_json::strict::StrictParser;
 use dacode_json::Workspace;
+use std::hint::black_box;
 
 const SEED: u64 = 0x2C0;
 
@@ -110,11 +110,13 @@ fn banner() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        println!("\n  baselines: yyjson {} | simdjson {} ({} kernel, {} B padding)\n",
+        println!(
+            "\n  baselines: yyjson {} | simdjson {} ({} kernel, {} B padding)\n",
             YyJson::version(),
             SimdJson::version(),
             SimdJson::implementation(),
-            SimdJson::padding());
+            SimdJson::padding()
+        );
     });
 }
 
@@ -129,7 +131,11 @@ fn verify(src: &[u8]) {
         .unwrap_or(0);
 
     assert_eq!(YyJson::sum_field(src, "score"), want, "yyjson sum_field");
-    assert_eq!(SimdJson::sum_field(&padded, "score"), want, "simdjson sum_field");
+    assert_eq!(
+        SimdJson::sum_field(&padded, "score"),
+        want,
+        "simdjson sum_field"
+    );
 
     let mut ws = Workspace::new();
     let doc = ws.parse(src);
@@ -282,59 +288,75 @@ fn bench_sum_field(c: &mut Criterion) {
             score: i64,
         }
 
-        group.bench_with_input(BenchmarkId::new("dacode_json_direct", label), src, |b, src| {
-            b.iter(|| {
-                let rows: Vec<Score> =
-                    dacode_json::direct::from_slice_borrowed(black_box(src)).expect("valid");
-                let sum: i64 = rows.iter().map(|r| r.score).sum();
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dacode_json_direct", label),
+            src,
+            |b, src| {
+                b.iter(|| {
+                    let rows: Vec<Score> =
+                        dacode_json::direct::from_slice_borrowed(black_box(src)).expect("valid");
+                    let sum: i64 = rows.iter().map(|r| r.score).sum();
+                    black_box(sum)
+                });
+            },
+        );
 
         // The indexed streaming path. Navigation is index arithmetic
         // rather than byte scanning, which should pay when most of the
         // document is skipped - this is the shape simdjson On-Demand wins
         // on, so it is the one worth testing.
-        group.bench_with_input(BenchmarkId::new("dacode_json_stream", label), src, |b, src| {
-            let mut idx = dacode_json::stream::Index::default();
-            idx.reserve_estimated(src.len());
-            b.iter(|| {
-                let rows: Vec<Score> =
-                    dacode_json::stream::from_slice_with(&mut idx, black_box(src)).expect("valid");
-                let sum: i64 = rows.iter().map(|r| r.score).sum();
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dacode_json_stream", label),
+            src,
+            |b, src| {
+                let mut idx = dacode_json::stream::Index::default();
+                idx.reserve_estimated(src.len());
+                b.iter(|| {
+                    let rows: Vec<Score> =
+                        dacode_json::stream::from_slice_with(&mut idx, black_box(src))
+                            .expect("valid");
+                    let sum: i64 = rows.iter().map(|r| r.score).sum();
+                    black_box(sum)
+                });
+            },
+        );
 
         // On-demand: seek the one field, skip the rest of each record
         // without enumerating it. Allocates nothing.
-        group.bench_with_input(BenchmarkId::new("dacode_json_pull", label), src, |b, src| {
-            b.iter(|| {
-                let mut sum = 0i64;
-                dacode_json::pull::select(black_box(src), &[b"score"], |got| {
-                    sum += got[0].and_then(|v| v.as_i64()).unwrap_or(0);
-                    Ok(())
-                })
-                .expect("valid");
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("dacode_json_pull", label),
+            src,
+            |b, src| {
+                b.iter(|| {
+                    let mut sum = 0i64;
+                    dacode_json::pull::select(black_box(src), &[b"score"], |got| {
+                        sum += got[0].and_then(|v| v.as_i64()).unwrap_or(0);
+                        Ok(())
+                    })
+                    .expect("valid");
+                    black_box(sum)
+                });
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("serde_json_typed", label), src, |b, src| {
-            b.iter(|| {
-                let rows: Vec<Score> = serde_json::from_slice(black_box(src)).expect("valid");
-                let sum: i64 = rows.iter().map(|r| r.score).sum();
-                black_box(sum)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("serde_json_typed", label),
+            src,
+            |b, src| {
+                b.iter(|| {
+                    let rows: Vec<Score> = serde_json::from_slice(black_box(src)).expect("valid");
+                    let sum: i64 = rows.iter().map(|r| r.score).sum();
+                    black_box(sum)
+                });
+            },
+        );
 
         group.bench_with_input(BenchmarkId::new("serde_json", label), src, |b, src| {
             b.iter(|| {
                 // Was parsing twice - `w_serde_value` and then `from_slice`
                 // - which halved the reported throughput. The wrapper is
                 // gone; this now measures one parse, like every other row.
-                let v: serde_json::Value =
-                    serde_json::from_slice(black_box(src)).expect("valid");
+                let v: serde_json::Value = serde_json::from_slice(black_box(src)).expect("valid");
                 let sum: i64 = v
                     .as_array()
                     .map(|a| a.iter().filter_map(|r| r.get("score")?.as_i64()).sum())

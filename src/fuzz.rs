@@ -313,9 +313,33 @@ fn values_match(a: &serde_json::Value, b: &serde_json::Value) -> bool {
 /// idea: splice in tokens a parser has special cases for.
 pub fn mutate(rng: &mut Rng, seed: &[u8], out: &mut Vec<u8>) {
     const INTERESTING: &[&[u8]] = &[
-        b"\"", b"\\", b"\\u", b"\\ud800", b"\\udfff", b"\\u0000", b"{", b"}", b"[", b"]",
-        b":", b",", b"0", b"-0", b"1e999", b"-1e-999", b"true", b"false", b"null", b".",
-        b"e", b"E", b"+", b"\x00", b"\xff", b"\xc0\x80", b"1234567890123456789012345",
+        b"\"",
+        b"\\",
+        b"\\u",
+        b"\\ud800",
+        b"\\udfff",
+        b"\\u0000",
+        b"{",
+        b"}",
+        b"[",
+        b"]",
+        b":",
+        b",",
+        b"0",
+        b"-0",
+        b"1e999",
+        b"-1e-999",
+        b"true",
+        b"false",
+        b"null",
+        b".",
+        b"e",
+        b"E",
+        b"+",
+        b"\x00",
+        b"\xff",
+        b"\xc0\x80",
+        b"1234567890123456789012345",
     ];
 
     out.clear();
@@ -340,7 +364,9 @@ pub fn mutate(rng: &mut Rng, seed: &[u8], out: &mut Vec<u8>) {
             // replace with an interesting byte
             2 => {
                 let i = rng.below(len as u64) as usize;
-                let b = *rng.pick(b"{}[]\",:\\ \t\n0123456789.eE+-tfn".as_slice()).unwrap_or(&b'x');
+                let b = *rng
+                    .pick(b"{}[]\",:\\ \t\n0123456789.eE+-tfn".as_slice())
+                    .unwrap_or(&b'x');
                 if let Some(slot) = out.get_mut(i) {
                     *slot = b;
                 }

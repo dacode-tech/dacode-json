@@ -398,7 +398,9 @@ impl<'a, T: FlatSchema> TypedView<'a, T> {
         }
 
         let count = rd_u64(buf, COUNT_OFF).ok_or(Error::TooShort)? as usize;
-        let records = buf.get(RECORDS_OFF..offsets_off).ok_or(Error::OutOfBounds)?;
+        let records = buf
+            .get(RECORDS_OFF..offsets_off)
+            .ok_or(Error::OutOfBounds)?;
         if count.checked_mul(T::STRIDE) != Some(records.len()) {
             return Err(Error::DanglingReference);
         }
@@ -724,13 +726,11 @@ macro_rules! flat_struct {
 #[cfg(feature = "serde")]
 pub mod de {
     use super::{FieldKind, FlatSchema, TypedView};
-    use serde::de::{
-        self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor,
-    };
     use alloc::format;
     use alloc::string::{String, ToString};
     use alloc::vec::Vec;
     use core::fmt;
+    use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
     /// Deserialisation failure.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -759,7 +759,10 @@ pub mod de {
         if i >= view.len() {
             return Err(Error(format!("row {i} out of range ({} rows)", view.len())));
         }
-        T::deserialize(RowDeserializer { view: *view, row: i })
+        T::deserialize(RowDeserializer {
+            view: *view,
+            row: i,
+        })
     }
 
     /// Deserialize every record into a `Vec<T>`.
@@ -911,9 +914,8 @@ pub mod de {
             ))
         }
         fn deserialize_f32<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-            visitor.visit_f32(f64::from_bits(
-                self.view.slot(self.row, self.field).unwrap_or(0),
-            ) as f32)
+            visitor
+                .visit_f32(f64::from_bits(self.view.slot(self.row, self.field).unwrap_or(0)) as f32)
         }
 
         serde::forward_to_deserialize_any! {
@@ -931,7 +933,10 @@ pub mod de {
     impl<'de> SeqAccess<'de> for ListAccess<'de> {
         type Error = Error;
 
-        fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>> {
+        fn next_element_seed<T: DeserializeSeed<'de>>(
+            &mut self,
+            seed: T,
+        ) -> Result<Option<T::Value>> {
             if self.k >= self.list.len() {
                 return Ok(None);
             }

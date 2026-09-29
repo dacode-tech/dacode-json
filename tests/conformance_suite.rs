@@ -20,12 +20,14 @@
 //! recorded rather than asserted, so the suite documents the gap instead of
 //! hiding it.
 
+use dacode_json::strict;
 use std::fs;
 use std::path::{Path, PathBuf};
-use dacode_json::strict;
 
 fn testdata(sub: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(sub)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("testdata")
+        .join(sub)
 }
 
 /// Every file in a directory, sorted, as `(name, bytes)`.
@@ -192,7 +194,10 @@ fn json_checker_pass_and_fail() {
         }
     }
 
-    assert!(passes >= 3 && fails >= 25, "suite looks incomplete: {passes} pass, {fails} fail");
+    assert!(
+        passes >= 3 && fails >= 25,
+        "suite looks incomplete: {passes} pass, {fails} fail"
+    );
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
@@ -210,7 +215,11 @@ fn transform_cases_match_serde_json() {
             diffs.push(format!("  {name}: ours={ours} serde={theirs}"));
         }
     }
-    assert!(diffs.is_empty(), "transform cases differ:\n{}", diffs.join("\n"));
+    assert!(
+        diffs.is_empty(),
+        "transform cases differ:\n{}",
+        diffs.join("\n")
+    );
 }
 
 /// Accepted documents must also *parse* to the same values, not merely be
@@ -256,7 +265,10 @@ fn values_match(a: &serde_json::Value, b: &serde_json::Value) -> bool {
             }
             match (x.as_f64(), y.as_f64()) {
                 (Some(x), Some(y)) => {
-                    (x.to_bits() as i64).wrapping_sub(y.to_bits() as i64).unsigned_abs() <= 2
+                    (x.to_bits() as i64)
+                        .wrapping_sub(y.to_bits() as i64)
+                        .unsigned_abs()
+                        <= 2
                         || (x.is_nan() && y.is_nan())
                 }
                 _ => false,
@@ -267,7 +279,8 @@ fn values_match(a: &serde_json::Value, b: &serde_json::Value) -> bool {
         }
         (J::Object(x), J::Object(y)) => {
             x.len() == y.len()
-                && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| values_match(v, w)))
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| values_match(v, w)))
         }
         _ => a == b,
     }
@@ -293,7 +306,11 @@ fn load_numbers(file: &str) -> Vec<String> {
 #[test]
 fn integer_literals_parse_exactly() {
     let nums = load_numbers("int.txt");
-    assert!(nums.len() > 100, "expected many integers, got {}", nums.len());
+    assert!(
+        nums.len() > 100,
+        "expected many integers, got {}",
+        nums.len()
+    );
 
     let mut p = strict::StrictParser::new();
     let mut checked = 0usize;
@@ -307,7 +324,10 @@ fn integer_literals_parse_exactly() {
         // 0 would discard. Matches serde_json; see src/strict.rs.
         if lit == "-0" {
             assert_eq!(root.as_f64(), Some(-0.0), "on {lit:?}");
-            assert!(root.as_f64().is_some_and(f64::is_sign_negative), "-0 lost its sign");
+            assert!(
+                root.as_f64().is_some_and(f64::is_sign_negative),
+                "-0 lost its sign"
+            );
             checked += 1;
             continue;
         }
@@ -382,9 +402,7 @@ fn real_literals_match_serde_json() {
             }
         }
     }
-    println!(
-        "checked {checked} reals; serde_json deviated from correctly-rounded on {ulp_diffs}"
-    );
+    println!("checked {checked} reals; serde_json deviated from correctly-rounded on {ulp_diffs}");
 }
 
 // =====================================================================

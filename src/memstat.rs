@@ -165,7 +165,9 @@ pub fn rss_peak() -> usize {
     // SAFETY: `getrusage` writes at most `sizeof(struct rusage)` bytes into
     // the pointer. `RUsage` is 18 `i64`s = 144 bytes, which matches or
     // exceeds the struct on both macOS and Linux.
-    let rc = unsafe { getrusage(0 /* RUSAGE_SELF */, &mut u) };
+    let rc = unsafe {
+        getrusage(0 /* RUSAGE_SELF */, &mut u)
+    };
     if rc != 0 {
         return 0;
     }

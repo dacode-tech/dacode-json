@@ -10,9 +10,9 @@
 //! only compares the three Vela scanners against each other.
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
 use dacode_json::corpus;
 use dacode_json::scan::{scan_into, Scanner, StructuralIndex};
+use std::hint::black_box;
 
 const TARGET: usize = 1 << 20; // 1 MiB per corpus
 const SEED: u64 = 0x5CA7;
@@ -49,9 +49,15 @@ fn bench_density(c: &mut Criterion) {
 
     let cases = [
         // ~1 structural per 3 bytes.
-        ("dense_ints", corpus::sized(1 << 20, SEED, corpus::int_array)),
+        (
+            "dense_ints",
+            corpus::sized(1 << 20, SEED, corpus::int_array),
+        ),
         // ~1 structural per 40 bytes.
-        ("sparse_strings", corpus::sized(1 << 20, SEED, corpus::strings)),
+        (
+            "sparse_strings",
+            corpus::sized(1 << 20, SEED, corpus::strings),
+        ),
     ];
 
     for (name, json) in &cases {
@@ -63,13 +69,17 @@ fn bench_density(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(bytes.len() as u64));
         for scanner in [Scanner::Branchless2x, Scanner::Branchless2xTable] {
             let mut buf = StructuralIndex::with_capacity(bytes.len() + 1);
-            group.bench_with_input(BenchmarkId::new(scanner.label(), name), bytes, |b, bytes| {
-                b.iter(|| {
-                    buf.clear();
-                    scan_into(scanner, black_box(bytes), &mut buf);
-                    black_box(buf.len())
-                });
-            });
+            group.bench_with_input(
+                BenchmarkId::new(scanner.label(), name),
+                bytes,
+                |b, bytes| {
+                    b.iter(|| {
+                        buf.clear();
+                        scan_into(scanner, black_box(bytes), &mut buf);
+                        black_box(buf.len())
+                    });
+                },
+            );
         }
     }
 
@@ -151,36 +161,50 @@ fn bench_phases(c: &mut Criterion) {
             });
         });
 
-        group.bench_with_input(BenchmarkId::new("2_carry_chain", name), bytes, |b, bytes| {
-            b.iter(|| {
-                let mut esc = 0u16;
-                let mut str_ = 0u16;
-                let mut acc = 0u16;
-                for a in black_box(bytes).as_chunks::<16>().0 {
-                    let cl = classify_hybrid(a);
-                    let (escaped, e) = find_escaped(cl.backslash, esc);
-                    esc = e;
-                    let real_q = cl.quote & !escaped;
-                    let in_str = prefix_xor16(real_q) ^ str_;
-                    str_ = if (in_str >> 15) & 1 != 0 { 0xFFFF } else { 0 };
-                    acc ^= real_q | (cl.structural & !in_str);
-                }
-                black_box(acc)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("2_carry_chain", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    let mut esc = 0u16;
+                    let mut str_ = 0u16;
+                    let mut acc = 0u16;
+                    for a in black_box(bytes).as_chunks::<16>().0 {
+                        let cl = classify_hybrid(a);
+                        let (escaped, e) = find_escaped(cl.backslash, esc);
+                        esc = e;
+                        let real_q = cl.quote & !escaped;
+                        let in_str = prefix_xor16(real_q) ^ str_;
+                        str_ = if (in_str >> 15) & 1 != 0 { 0xFFFF } else { 0 };
+                        acc ^= real_q | (cl.structural & !in_str);
+                    }
+                    black_box(acc)
+                });
+            },
+        );
 
         let mut idx = StructuralIndex::with_capacity(bytes.len() + 1);
-        group.bench_with_input(BenchmarkId::new("3_full_extract", name), bytes, |b, bytes| {
-            b.iter(|| {
-                idx.clear();
-                scan_into(Scanner::BranchlessHybrid, black_box(bytes), &mut idx);
-                black_box(idx.len())
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("3_full_extract", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| {
+                    idx.clear();
+                    scan_into(Scanner::BranchlessHybrid, black_box(bytes), &mut idx);
+                    black_box(idx.len())
+                });
+            },
+        );
     }
 
     group.finish();
 }
 
-criterion_group!(benches, bench_classifier, bench_phases, bench_scan, bench_density);
+criterion_group!(
+    benches,
+    bench_classifier,
+    bench_phases,
+    bench_scan,
+    bench_density
+);
 criterion_main!(benches);

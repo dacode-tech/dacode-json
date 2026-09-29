@@ -198,7 +198,10 @@ impl core::fmt::Display for Error {
             Error::BadUtf8 => write!(f, "string is not valid UTF-8"),
             Error::TooLarge => write!(f, "document too large for the format"),
             Error::LayoutMismatch => {
-                write!(f, "buffer layout does not match the reader (dynamic vs typed)")
+                write!(
+                    f,
+                    "buffer layout does not match the reader (dynamic vs typed)"
+                )
             }
             Error::SchemaMismatch => write!(f, "buffer was written for a different schema"),
         }
@@ -298,7 +301,11 @@ impl Builder {
         out.extend_from_slice(&(if self.sort_keys { FLAG_SORTED_KEYS } else { 0 }).to_le_bytes());
         out.extend_from_slice(&node_count.to_le_bytes());
         out.extend_from_slice(&0u32.to_le_bytes()); // root is always node 0
-        out.extend_from_slice(&u32::try_from(nodes_off).map_err(|_| Error::TooLarge)?.to_le_bytes());
+        out.extend_from_slice(
+            &u32::try_from(nodes_off)
+                .map_err(|_| Error::TooLarge)?
+                .to_le_bytes(),
+        );
         out.extend_from_slice(
             &u32::try_from(numbers_off)
                 .map_err(|_| Error::TooLarge)?
@@ -309,7 +316,11 @@ impl Builder {
                 .map_err(|_| Error::TooLarge)?
                 .to_le_bytes(),
         );
-        out.extend_from_slice(&u32::try_from(total).map_err(|_| Error::TooLarge)?.to_le_bytes());
+        out.extend_from_slice(
+            &u32::try_from(total)
+                .map_err(|_| Error::TooLarge)?
+                .to_le_bytes(),
+        );
 
         for n in &w.nodes {
             out.extend_from_slice(&n.0.to_le_bytes());
@@ -377,7 +388,11 @@ impl Writer {
         let node = match v.typ() {
             Type::Null => (make_tag(K_NULL, 0), 0),
             Type::Bool => {
-                let k = if v.as_bool() == Some(true) { K_TRUE } else { K_FALSE };
+                let k = if v.as_bool() == Some(true) {
+                    K_TRUE
+                } else {
+                    K_FALSE
+                };
                 (make_tag(k, 0), 0)
             }
             Type::Number => {
@@ -408,7 +423,13 @@ impl Writer {
                 }
                 let first = self.nodes.len();
                 self.nodes.resize(first + count as usize, (0, 0));
-                self.set(slot, (make_tag(K_ARRAY, count), u32::try_from(first).map_err(|_| Error::TooLarge)?))?;
+                self.set(
+                    slot,
+                    (
+                        make_tag(K_ARRAY, count),
+                        u32::try_from(first).map_err(|_| Error::TooLarge)?,
+                    ),
+                )?;
 
                 for (i, child) in v.elements().enumerate() {
                     self.write_into(first + i, child)?;
@@ -424,8 +445,7 @@ impl Writer {
 
                 // Decode keys once here rather than on every read, and sort
                 // so `Ref::get` can binary search.
-                let mut pairs: Vec<(Cow<'_, str>, Value<'_>)> =
-                    Vec::with_capacity(count as usize);
+                let mut pairs: Vec<(Cow<'_, str>, Value<'_>)> = Vec::with_capacity(count as usize);
                 for (k, val) in v.entries() {
                     pairs.push((crate::unescape::unescape(k).ok_or(Error::BadUtf8)?, val));
                 }
@@ -435,7 +455,13 @@ impl Writer {
 
                 let first = self.nodes.len();
                 self.nodes.resize(first + count as usize * 2, (0, 0));
-                self.set(slot, (make_tag(K_OBJECT, count), u32::try_from(first).map_err(|_| Error::TooLarge)?))?;
+                self.set(
+                    slot,
+                    (
+                        make_tag(K_OBJECT, count),
+                        u32::try_from(first).map_err(|_| Error::TooLarge)?,
+                    ),
+                )?;
 
                 let dedup = self.intern != Intern::None;
                 for (i, (key, val)) in pairs.into_iter().enumerate() {
@@ -554,7 +580,9 @@ impl<'a> View<'a> {
         }
 
         let nodes = buf.get(nodes_off..numbers_off).ok_or(Error::OutOfBounds)?;
-        let numbers = buf.get(numbers_off..strings_off).ok_or(Error::OutOfBounds)?;
+        let numbers = buf
+            .get(numbers_off..strings_off)
+            .ok_or(Error::OutOfBounds)?;
         let strings = buf.get(strings_off..total).ok_or(Error::OutOfBounds)?;
 
         Ok(View {
@@ -584,16 +612,15 @@ impl<'a> View<'a> {
                     let s = self.str_at(r.payload, r.aux).ok_or(Error::OutOfBounds)?;
                     core::str::from_utf8(s).map_err(|_| Error::BadUtf8)?;
                 }
-                K_INT_TABLE | K_FLOAT
-                    if rd_u64(self.numbers, r.payload as usize * 8).is_none() => {
-                        return Err(Error::DanglingReference);
-                    }
+                K_INT_TABLE | K_FLOAT if rd_u64(self.numbers, r.payload as usize * 8).is_none() => {
+                    return Err(Error::DanglingReference);
+                }
                 K_ARRAY | K_OBJECT => {
                     let per = if r.kind == K_OBJECT { 2 } else { 1 };
-                    let need = (r.aux as usize).checked_mul(per).ok_or(Error::OutOfBounds)?;
-                    if (r.payload as usize).saturating_add(need)
-                        > self.node_count as usize
-                    {
+                    let need = (r.aux as usize)
+                        .checked_mul(per)
+                        .ok_or(Error::OutOfBounds)?;
+                    if (r.payload as usize).saturating_add(need) > self.node_count as usize {
                         return Err(Error::DanglingReference);
                     }
                 }

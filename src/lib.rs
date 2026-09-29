@@ -96,7 +96,6 @@
         clippy::unwrap_in_result
     )
 )]
-
 #![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "alloc")]
@@ -179,13 +178,13 @@ pub mod memstat;
 // Re-exports
 // =====================================================================
 
+#[cfg(all(feature = "serde", feature = "std"))]
+pub use api::from_reader;
 #[cfg(feature = "serde")]
 pub use api::{
     from_slice, from_str, to_string, to_vec, to_writer, validate, Document, Error, Parser, Result,
     ValueRef,
 };
-#[cfg(all(feature = "serde", feature = "std"))]
-pub use api::from_reader;
 
 #[cfg(feature = "raw_value")]
 pub use raw::RawJson;
@@ -194,12 +193,12 @@ pub use raw::RawJson;
 pub use pool::{Node, Pool};
 #[cfg(feature = "alloc")]
 pub use query::{Doc, Value};
+pub use scan::Scanner;
 #[cfg(feature = "alloc")]
 pub use scan::StructuralIndex;
+pub use tag::Type;
 #[cfg(feature = "alloc")]
 pub use workspace::Workspace;
-pub use scan::Scanner;
-pub use tag::Type;
 
 /// Parse into an owned [`Pool`] with a fresh allocation — Vela's
 /// `json_pool_parse_fast`.

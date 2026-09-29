@@ -22,11 +22,11 @@
 //! application that has to make it.
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use std::hint::black_box;
-use simd_json::prelude::*;
 use dacode_json::corpus;
 use dacode_json::strict::StrictParser;
 use dacode_json::Workspace;
+use simd_json::prelude::*;
+use std::hint::black_box;
 
 const SEED: u64 = 0x5CA7;
 
@@ -111,9 +111,13 @@ fn bench_corpus(c: &mut Criterion, size: usize, group_name: &str) {
             let mut ws = Workspace::with_capacity(bytes.len());
             // Warm the buffers so the first sample is not an outlier.
             let _ = ws.parse(bytes).root().len();
-            group.bench_with_input(BenchmarkId::new("vela_faithful", name), bytes, |b, bytes| {
-                b.iter(|| black_box(w_vela_faithful(&mut ws, black_box(bytes))));
-            });
+            group.bench_with_input(
+                BenchmarkId::new("vela_faithful", name),
+                bytes,
+                |b, bytes| {
+                    b.iter(|| black_box(w_vela_faithful(&mut ws, black_box(bytes))));
+                },
+            );
         }
 
         // --- Vela port, RFC 8259 conformant ---
@@ -143,20 +147,28 @@ fn bench_corpus(c: &mut Criterion, size: usize, group_name: &str) {
         }
 
         // --- serde_json ---
-        group.bench_with_input(BenchmarkId::new("serde_json_value", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_serde_value(black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("serde_json_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_serde_value(black_box(bytes))));
+            },
+        );
 
         // --- simd-json tape (the closest structural analogue) ---
         {
             let mut buffers = simd_json::Buffers::new(bytes.len());
-            group.bench_with_input(BenchmarkId::new("simd_json_tape", name), bytes, |b, bytes| {
-                b.iter_batched_ref(
-                    || padded(bytes),
-                    |buf| black_box(w_simd_tape(buf, &mut buffers)),
-                    BatchSize::LargeInput,
-                );
-            });
+            group.bench_with_input(
+                BenchmarkId::new("simd_json_tape", name),
+                bytes,
+                |b, bytes| {
+                    b.iter_batched_ref(
+                        || padded(bytes),
+                        |buf| black_box(w_simd_tape(buf, &mut buffers)),
+                        BatchSize::LargeInput,
+                    );
+                },
+            );
         }
 
         // --- simd-json borrowed DOM ---
@@ -173,9 +185,13 @@ fn bench_corpus(c: &mut Criterion, size: usize, group_name: &str) {
         );
 
         // --- sonic-rs ---
-        group.bench_with_input(BenchmarkId::new("sonic_rs_value", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_sonic_value(black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("sonic_rs_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_sonic_value(black_box(bytes))));
+            },
+        );
     }
 
     group.finish();
@@ -199,7 +215,10 @@ fn bench_small(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_small");
 
     let cases: Vec<(&str, String)> = vec![
-        ("68b", r#"{"id":1,"name":"alpha","ok":true,"tags":["x","y"]}"#.to_string()),
+        (
+            "68b",
+            r#"{"id":1,"name":"alpha","ok":true,"tags":["x","y"]}"#.to_string(),
+        ),
         ("1kb", corpus::sized(1024, SEED, corpus::records)),
         ("16kb", corpus::sized(16 * 1024, SEED, corpus::records)),
     ];
@@ -210,38 +229,62 @@ fn bench_small(c: &mut Criterion) {
 
         let mut ws = Workspace::with_capacity(bytes.len());
         let _ = ws.parse(bytes);
-        group.bench_with_input(BenchmarkId::new("vela_faithful_reuse", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_vela_faithful(&mut ws, black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("vela_faithful_reuse", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_vela_faithful(&mut ws, black_box(bytes))));
+            },
+        );
 
         let mut p = StrictParser::with_capacity(bytes.len());
         let _ = p.validate(bytes);
-        group.bench_with_input(BenchmarkId::new("vela_strict_reuse", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_vela_strict(&mut p, black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("vela_strict_reuse", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_vela_strict(&mut p, black_box(bytes))));
+            },
+        );
 
         // Fresh allocation every call — what Vela's `json_pool_parse_fast`
         // does, and what J2 was written to avoid.
-        group.bench_with_input(BenchmarkId::new("vela_faithful_fresh", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_vela_fresh(black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("vela_faithful_fresh", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_vela_fresh(black_box(bytes))));
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("serde_json_value", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_serde_value(black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("serde_json_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_serde_value(black_box(bytes))));
+            },
+        );
 
         let mut buffers = simd_json::Buffers::new(bytes.len().max(128));
-        group.bench_with_input(BenchmarkId::new("simd_json_tape", name), bytes, |b, bytes| {
-            b.iter_batched_ref(
-                || padded(bytes),
-                |buf| black_box(w_simd_tape(buf, &mut buffers)),
-                BatchSize::SmallInput,
-            );
-        });
+        group.bench_with_input(
+            BenchmarkId::new("simd_json_tape", name),
+            bytes,
+            |b, bytes| {
+                b.iter_batched_ref(
+                    || padded(bytes),
+                    |buf| black_box(w_simd_tape(buf, &mut buffers)),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
 
-        group.bench_with_input(BenchmarkId::new("sonic_rs_value", name), bytes, |b, bytes| {
-            b.iter(|| black_box(w_sonic_value(black_box(bytes))));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("sonic_rs_value", name),
+            bytes,
+            |b, bytes| {
+                b.iter(|| black_box(w_sonic_value(black_box(bytes))));
+            },
+        );
     }
 
     group.finish();

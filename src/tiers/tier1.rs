@@ -503,7 +503,7 @@ mod tests {
             b"[1,2",
             br#"{"a":1"#,
             br#"{"a""#,
-            b"txxx",  // only the first byte of a literal is checked
+            b"txxx", // only the first byte of a literal is checked
             b"nxxx",
             b"fxxxx",
             b"[,]",

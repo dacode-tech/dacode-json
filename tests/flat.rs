@@ -33,7 +33,9 @@ fn same(r: flat::Ref<'_>, j: &serde_json::Value) -> Result<(), String> {
                 // correctly rounded, ours is. See
                 // `serde_de.rs::float_precision_beats_serde_json_default`.
                 (Some(a), Some(b)) => {
-                    let ulps = (a.to_bits() as i64).wrapping_sub(b.to_bits() as i64).unsigned_abs();
+                    let ulps = (a.to_bits() as i64)
+                        .wrapping_sub(b.to_bits() as i64)
+                        .unsigned_abs();
                     if ulps <= 1 {
                         Ok(())
                     } else {
@@ -147,7 +149,10 @@ fn integers_inline_and_tabled() {
     let view = View::new(&buf).expect("view");
     let r = view.root();
     assert_eq!(r.at(0).and_then(|v| v.as_i64()), Some(i64::from(i32::MIN)));
-    assert_eq!(r.at(2).and_then(|v| v.as_i64()), Some(i64::from(i32::MAX) + 1));
+    assert_eq!(
+        r.at(2).and_then(|v| v.as_i64()),
+        Some(i64::from(i32::MAX) + 1)
+    );
     assert_eq!(r.at(3).and_then(|v| v.as_i64()), Some(i64::MIN));
     assert_eq!(r.at(4).and_then(|v| v.as_i64()), Some(i64::MAX));
 }
@@ -157,7 +162,8 @@ fn generated_corpora_roundtrip() {
     for (name, json) in corpus::suite(200_000, 55) {
         let buf = encode(&json);
         let view = View::new(&buf).expect("view");
-        view.validate_deep().unwrap_or_else(|e| panic!("{name}: {e}"));
+        view.validate_deep()
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         let expect: serde_json::Value = serde_json::from_str(&json).expect("valid");
         if let Err(why) = same(view.root(), &expect) {
             panic!("{name}: {why}");

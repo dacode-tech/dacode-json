@@ -41,8 +41,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.as_f64());
     println!("tls.min_version    {min_tls:?}");
 
-    println!("replicas           {:?}", root.get("replicas").and_then(|v| v.as_i64()));
-    println!("debug              {:?}", root.get("debug").and_then(|v| v.as_bool()));
+    println!(
+        "replicas           {:?}",
+        root.get("replicas").and_then(|v| v.as_i64())
+    );
+    println!(
+        "debug              {:?}",
+        root.get("debug").and_then(|v| v.as_bool())
+    );
 
     // --- Iterate an array --------------------------------------------
     if let Some(listen) = root.get("service").and_then(|s| s.get("listen")) {
@@ -63,10 +69,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // --- A missing key is None, not an error -------------------------
-    println!("missing            {:?}", root.get("nope").and_then(|v| v.as_i64()));
+    println!(
+        "missing            {:?}",
+        root.get("nope").and_then(|v| v.as_i64())
+    );
 
     // --- Wrong type is also None, not a panic ------------------------
-    println!("replicas as str    {:?}", root.get("replicas").and_then(|v| v.as_str()));
+    println!(
+        "replicas as str    {:?}",
+        root.get("replicas").and_then(|v| v.as_str())
+    );
 
     // --- Reuse the parser across documents ---------------------------
     //

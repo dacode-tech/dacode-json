@@ -297,7 +297,11 @@ impl<'a> Writer<'a> {
     pub fn bool(&mut self, v: bool) -> Result<&mut Self> {
         self.atomic(|w| {
             w.sep()?;
-            w.put(if v { b"true".as_slice() } else { b"false".as_slice() })
+            w.put(if v {
+                b"true".as_slice()
+            } else {
+                b"false".as_slice()
+            })
         })
     }
 
@@ -477,7 +481,10 @@ mod tests {
             w.str("a\"b\\c\nd\te\u{1}")?;
             Ok(())
         });
-        assert_eq!(s_ours, serde_json::to_string("a\"b\\c\nd\te\u{1}").expect("ser"));
+        assert_eq!(
+            s_ours,
+            serde_json::to_string("a\"b\\c\nd\te\u{1}").expect("ser")
+        );
     }
 
     #[test]

@@ -49,11 +49,11 @@
     clippy::exit
 )]
 
-use std::env;
-use std::hint::black_box;
 use dacode_json::memstat::{human, Snapshot};
 use dacode_json::strict::StrictParser;
 use dacode_json::{corpus, flat, Workspace};
+use std::env;
+use std::hint::black_box;
 
 // Counting the Rust side needs a global allocator hook. It adds a couple of
 // relaxed atomics per allocation, which is why this lives in its own binary
@@ -160,10 +160,7 @@ fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let which = args.get(1).map(String::as_str).unwrap_or("list");
     let corpus_name = args.get(2).map(String::as_str).unwrap_or("records");
-    let target: usize = args
-        .get(3)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1 << 20);
+    let target: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1 << 20);
 
     if which == "list" {
         println!("{}", IMPLS.join(" "));

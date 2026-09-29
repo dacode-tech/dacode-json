@@ -23,9 +23,9 @@
     clippy::exit
 )]
 
-use std::hint::black_box;
 use dacode_json::corpus::Rng;
 use dacode_json::fuzz::{check, mutate, seed_corpus, Finding};
+use std::hint::black_box;
 
 fn main() -> Result<(), Findings> {
     let args: Vec<String> = std::env::args().collect();
@@ -36,7 +36,10 @@ fn main() -> Result<(), Findings> {
     if seeds.is_empty() {
         eprintln!("no seed corpus under testdata/; falling back to generated documents");
     }
-    eprintln!("seed={seed} iterations={iters} corpus={} files", seeds.len());
+    eprintln!(
+        "seed={seed} iterations={iters} corpus={} files",
+        seeds.len()
+    );
 
     let mut rng = Rng::new(seed);
     let mut buf = Vec::new();

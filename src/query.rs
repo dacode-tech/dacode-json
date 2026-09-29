@@ -272,7 +272,11 @@ impl<'a> Value<'a> {
         use core::fmt::Write as _;
         match self.node.typ() {
             Type::Null => out.push_str("null"),
-            Type::Bool => out.push_str(if self.node.payload != 0 { "true" } else { "false" }),
+            Type::Bool => out.push_str(if self.node.payload != 0 {
+                "true"
+            } else {
+                "false"
+            }),
             Type::Number => {
                 let _ = write!(out, "{}", self.node.payload as i64);
             }

@@ -57,8 +57,21 @@ fn y_structures() {
 #[test]
 fn y_numbers() {
     for s in [
-        "0", "-0", "1", "-1", "42", "1.0", "-1.5", "1e3", "1E3", "1e+3", "1e-3", "1.5e10",
-        "-0.0e-0", "123456789012345678901234567890", "1e308",
+        "0",
+        "-0",
+        "1",
+        "-1",
+        "42",
+        "1.0",
+        "-1.5",
+        "1e3",
+        "1E3",
+        "1e+3",
+        "1e-3",
+        "1.5e10",
+        "-0.0e-0",
+        "123456789012345678901234567890",
+        "1e308",
     ] {
         accept(s);
     }
@@ -212,20 +225,28 @@ fn numbers_are_real_numbers() {
     // i64 overflow degrades to f64, like serde_json without
     // `arbitrary_precision`.
     assert_eq!(r.get("big").map(|v| v.typ()), Some(Type::Float));
-    assert_eq!(r.get("big").and_then(|v| v.as_f64()), Some(1.2345678901234568e29));
+    assert_eq!(
+        r.get("big").and_then(|v| v.as_f64()),
+        Some(1.2345678901234568e29)
+    );
 }
 
 #[test]
 fn strings_still_borrow() {
     let mut p = StrictParser::new();
-    let doc = p.parse(br#"{"clean":"no escapes","dirty":"a\nb"}"#).expect("valid");
+    let doc = p
+        .parse(br#"{"clean":"no escapes","dirty":"a\nb"}"#)
+        .expect("valid");
     let r = doc.root();
 
     assert!(matches!(
         r.get("clean").and_then(|v| v.as_str()),
         Some(std::borrow::Cow::Borrowed("no escapes"))
     ));
-    assert_eq!(r.get("dirty").and_then(|v| v.as_str()).as_deref(), Some("a\nb"));
+    assert_eq!(
+        r.get("dirty").and_then(|v| v.as_str()).as_deref(),
+        Some("a\nb")
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -292,8 +313,8 @@ fn differential_against_serde_json_random() {
 
     for i in 0..20_000 {
         let src = corpus::random_value(&mut rng, 4);
-        let expect: serde_json::Value =
-            serde_json::from_str(&src).unwrap_or_else(|e| panic!("generator bug at {i}: {e}\n{src}"));
+        let expect: serde_json::Value = serde_json::from_str(&src)
+            .unwrap_or_else(|e| panic!("generator bug at {i}: {e}\n{src}"));
 
         let doc = p
             .parse(src.as_bytes())
@@ -310,7 +331,9 @@ fn differential_against_serde_json_corpora() {
     let mut p = StrictParser::new();
     for (name, src) in corpus::suite(200_000, 4242) {
         let expect: serde_json::Value = serde_json::from_str(&src).expect("corpus is valid");
-        let doc = p.parse(src.as_bytes()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = p
+            .parse(src.as_bytes())
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         if let Err(why) = same(&doc.root(), &expect) {
             panic!("{name}: {why}");
         }

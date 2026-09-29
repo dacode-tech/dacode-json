@@ -3,12 +3,12 @@
 
 #![cfg(feature = "serde")]
 
-use serde::Deserialize;
-use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
 use dacode_json::corpus;
 use dacode_json::de;
 use dacode_json::strict::StrictParser;
+use serde::Deserialize;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap};
 
 /// Round-trip a document through both deserializers and require equality.
 #[track_caller]
@@ -16,7 +16,8 @@ fn same<T>(json: &str)
 where
     T: for<'a> Deserialize<'a> + PartialEq + std::fmt::Debug,
 {
-    let theirs: T = serde_json::from_str(json).unwrap_or_else(|e| panic!("serde_json: {e}\n{json}"));
+    let theirs: T =
+        serde_json::from_str(json).unwrap_or_else(|e| panic!("serde_json: {e}\n{json}"));
     let ours: T = de::from_slice(json.as_bytes()).unwrap_or_else(|e| panic!("vela: {e}\n{json}"));
     assert_eq!(ours, theirs, "mismatch on {json}");
 }
@@ -114,9 +115,7 @@ struct Skipping {
 fn unknown_fields_are_skipped_by_subtree_walk() {
     // Skipping is `skip_subtree`, an index walk. Bury the wanted field
     // behind a lot of structure to be sure the walk lands correctly.
-    same::<Skipping>(
-        r#"{"junk":{"a":[1,2,{"b":[[[]]]}],"c":"x"},"keep":7,"more":[{"d":null}]}"#,
-    );
+    same::<Skipping>(r#"{"junk":{"a":[1,2,{"b":[[[]]]}],"c":"x"},"keep":7,"more":[{"d":null}]}"#);
     same::<Skipping>(r#"{"keep":1,"z":[[[[[[1]]]]]]}"#);
 }
 
@@ -165,7 +164,10 @@ fn borrowed_str_fields_work() {
     let got: S<'_> = de::from_doc(doc).expect("deserialize");
     assert_eq!(got.name, "alpha");
     // Same allocation as the input.
-    assert!(std::ptr::eq(got.name.as_ptr(), json.as_ptr().wrapping_add(9)));
+    assert!(std::ptr::eq(
+        got.name.as_ptr(),
+        json.as_ptr().wrapping_add(9)
+    ));
 }
 
 // ---------------------------------------------------------------------
@@ -182,13 +184,7 @@ fn type_mismatches_are_errors_not_panics() {
 
 #[test]
 fn malformed_json_is_rejected() {
-    for bad in [
-        &b"{"[..],
-        b"{\"a\":}",
-        b"[1,]",
-        b"3.14.15",
-        b"",
-    ] {
+    for bad in [&b"{"[..], b"{\"a\":}", b"[1,]", b"3.14.15", b""] {
         assert!(
             de::from_slice::<serde_json::Value>(bad).is_err(),
             "should reject {:?}",
@@ -250,7 +246,9 @@ fn values_match(a: &serde_json::Value, b: &serde_json::Value) -> bool {
                 (Some(x), Some(y)) => {
                     // `.abs()` panics on i64::MIN, which two far-apart bit patterns
                     // can produce. `unsigned_abs` is total.
-                    let ulps = (x.to_bits() as i64).wrapping_sub(y.to_bits() as i64).unsigned_abs();
+                    let ulps = (x.to_bits() as i64)
+                        .wrapping_sub(y.to_bits() as i64)
+                        .unsigned_abs();
                     ulps <= 1
                 }
                 _ => false,
@@ -277,7 +275,10 @@ fn random_documents_match_serde_json_as_value() {
         let theirs: serde_json::Value = serde_json::from_str(&src).expect("serde_json");
         let doc = p.parse(src.as_bytes()).expect("strict parse");
         let ours: serde_json::Value = de::from_doc(doc).expect("vela de");
-        assert!(values_match(&ours, &theirs), "on {src}\n ours: {ours}\nserde: {theirs}");
+        assert!(
+            values_match(&ours, &theirs),
+            "on {src}\n ours: {ours}\nserde: {theirs}"
+        );
     }
 }
 

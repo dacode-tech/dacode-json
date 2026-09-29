@@ -362,7 +362,10 @@ mod tests {
         // `invalid_type`), never a panic or a silently wrong value. Documented
         // in the module header and docs/RAWJSON.md §4.
         let res = crate::stream::from_slice::<Event>(br#"{"name":"x","args":{"a":1}}"#);
-        assert!(res.is_err(), "stream path must reject RawJson, not corrupt it");
+        assert!(
+            res.is_err(),
+            "stream path must reject RawJson, not corrupt it"
+        );
     }
 
     #[test]
