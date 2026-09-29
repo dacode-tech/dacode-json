@@ -216,7 +216,6 @@ impl<'a, 'de> ValueDe<'a, 'de> {
             .ok_or_else(|| Error::at(open, "unterminated string"))?;
         Ok(raw)
     }
-
 }
 
 macro_rules! forward_scalar {
@@ -253,13 +252,25 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
                     return Err(Error::at(self.start, "misaligned array"));
                 }
                 self.c.bump();
+                // `vend` describes the last completed value, and none has
+                // been completed yet, so seed it with where the first
+                // element would start. That makes `end_seq`'s `gap_ok`
+                // answer the right question for an empty array, whose
+                // closer is reached without any element having set `vend`
+                // — the case `next_element_seed` otherwise has to special-
+                // case through `first`.
+                self.c.vend = self.c.value_start();
                 let depth = self.depth + 1;
-                visitor.visit_seq(ArrayAccess {
-                    c: self.c,
+                let ret = visitor.visit_seq(ArrayAccess {
+                    c: &mut *self.c,
                     first: true,
                     depth,
                     done: false,
-                })
+                });
+                match (ret, end_seq(self.c)) {
+                    (Ok(v), Ok(())) => Ok(v),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
             }
             b'"' => {
                 let raw = self.take_raw_str()?;
@@ -474,7 +485,12 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
                 // The offending byte used to be formatted into the
                 // message. The offset already points at it, and keeping
                 // it cost an allocation on every parse error.
-                _ => return Err(Error::at(self.c.peek_pos(), "expected ',' or '}' in object")),
+                _ => {
+                    return Err(Error::at(
+                        self.c.peek_pos(),
+                        "expected ',' or '}' in object",
+                    ))
+                }
             }
         }
         self.first = false;
@@ -499,7 +515,10 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
             return Err(Error::at(self.c.vend, "unexpected characters after key"));
         }
         if self.c.peek() != b':' {
-            return Err(Error::at(self.c.peek_pos(), "expected ':' after object key"));
+            return Err(Error::at(
+                self.c.peek_pos(),
+                "expected ':' after object key",
+            ));
         }
         self.c.bump();
 
@@ -522,6 +541,56 @@ impl<'a, 'de> MapAccess<'de> for ObjectAccess<'a, 'de> {
     }
 }
 
+/// Consume an array's `]` once `visit_seq` has returned.
+///
+/// serde drives two protocols through `SeqAccess` and only one of them
+/// reaches the closer. A collection (`Vec`, `Value`, …) calls
+/// `next_element_seed` until it returns `None`. A *fixed-length* visitor —
+/// a tuple, a tuple struct, a tuple enum variant, `[T; N]` — calls it
+/// exactly `len` times and returns without ever asking for another element.
+/// So the closer is consumed here, by the caller of `visit_seq`, and
+/// `next_element_seed` only peeks it. That is `serde_json`'s split between
+/// `SeqAccess::next_element_seed` and its `Deserializer::end_seq`; the
+/// inverse — eating the `]` in `next_element_seed` and letting the closer
+/// go unconsumed — handed control back to the *enclosing* container with
+/// the `]` still pending, and that container consumed it as its own
+/// terminator. `[[1,2],[3,4]]` as `Vec<(u64, u64)>` then read one pair,
+/// closed the outer `Vec` early, and reported the rest of the document as
+/// trailing characters.
+///
+/// A surplus element is an error, never a silent truncation: `[1,2,3]` into
+/// a 2-tuple is rejected, as `serde_json` rejects it.
+///
+/// The `direct` tier has the same function over a byte cursor; this one
+/// walks the structural index instead, so "whitespace only between the last
+/// value and the closer" is `gap_ok` rather than a `skip_ws`.
+fn end_seq(c: &mut Cursor<'_>) -> Result<()> {
+    if !c.gap_ok() {
+        return Err(Error::at(c.vend, "unexpected characters after value"));
+    }
+    let at = c.peek_pos();
+    match c.peek() {
+        b']' => {
+            c.close();
+            Ok(())
+        }
+        b',' => {
+            c.bump();
+            // The index holds structural characters only, so `,` followed
+            // by `]` in the index is ambiguous: `[1,2,]` and `[1,2,3]`
+            // both look that way, because `3` is not indexed. `value_start`
+            // is what separates them — it is the byte after the comma with
+            // whitespace skipped, so it equals the closer's position only
+            // when no value sits between them.
+            if c.peek() == b']' && c.value_start() == c.peek_pos() {
+                return Err(Error::at(c.peek_pos(), "trailing comma in array"));
+            }
+            Err(Error::at(at, "trailing characters in array"))
+        }
+        _ => Err(Error::at(at, "expected ',' or ']' in array")),
+    }
+}
+
 struct ArrayAccess<'a, 'de> {
     c: &'a mut Cursor<'de>,
     first: bool,
@@ -538,9 +607,10 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
         }
         // See the note in `ObjectAccess`: `[fals]` has no index entry for
         // the token, so the next entry is the `]`.
+        // The closer is peeked, never consumed: `end_seq`, run by the
+        // caller of `visit_seq`, owns it. See the note there.
         if self.first {
             if self.c.peek() == b']' && self.c.value_start() == self.c.peek_pos() {
-                self.c.close();
                 self.done = true;
                 return Ok(None);
             }
@@ -550,7 +620,6 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
             }
             match self.c.peek() {
                 b']' => {
-                    self.c.close();
                     self.done = true;
                     return Ok(None);
                 }
@@ -685,7 +754,11 @@ impl<'de> de::VariantAccess<'de> for UnitPayload {
     fn tuple_variant<V: Visitor<'de>>(self, _l: usize, _v: V) -> Result<V::Value> {
         Err(Error::plain("expected a unit variant"))
     }
-    fn struct_variant<V: Visitor<'de>>(self, _f: &'static [&'static str], _v: V) -> Result<V::Value> {
+    fn struct_variant<V: Visitor<'de>>(
+        self,
+        _f: &'static [&'static str],
+        _v: V,
+    ) -> Result<V::Value> {
         Err(Error::plain("expected a unit variant"))
     }
 }
@@ -742,7 +815,12 @@ impl<'a, 'de> Payload<'a, 'de> {
                 "enum object must have exactly one key",
             ));
         }
-        self.c.bump();
+        // `Cursor::close`, not `bump`: the root-value check in
+        // `from_slice` measures the tail from `vend`, and `bump` advances
+        // the index without moving it. Every enum object variant therefore
+        // parsed correctly and was then rejected for the `}` it had just
+        // consumed — `{"N":5}` as "trailing characters after the document".
+        self.c.close();
         Ok(())
     }
 }

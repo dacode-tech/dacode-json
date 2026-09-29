@@ -61,7 +61,6 @@ fn zero_bytes(v: u64) -> u64 {
     v.wrapping_sub(LO) & !v & HI
 }
 
-
 // =====================================================================
 // Cursor
 // =====================================================================
@@ -295,9 +294,7 @@ pub fn from_slice_ascii<T: serde::de::DeserializeOwned>(input: &[u8]) -> Result<
 }
 
 /// [`from_slice_ascii`], borrowing from the input.
-pub fn from_slice_ascii_borrowed<'de, T: serde::Deserialize<'de>>(
-    input: &'de [u8],
-) -> Result<T> {
+pub fn from_slice_ascii_borrowed<'de, T: serde::Deserialize<'de>>(input: &'de [u8]) -> Result<T> {
     if !is_ascii(input) {
         return Err(err(0, "input is not ASCII"));
     }
@@ -373,11 +370,15 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
             b'[' => {
                 self.c.pos += 1;
                 let depth = self.depth + 1;
-                visitor.visit_seq(ArrayAccess {
-                    c: self.c,
+                let ret = visitor.visit_seq(ArrayAccess {
+                    c: &mut *self.c,
                     first: true,
                     depth,
-                })
+                });
+                match (ret, end_seq(self.c)) {
+                    (Ok(v), Ok(())) => Ok(v),
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
             }
             b'"' => {
                 let (raw, simple) = self.c.scan_string()?;
@@ -649,7 +650,13 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
 
     fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>> {
         self.c.skip_ws();
-        if self.c.eat(b']') {
+        // Peeked, not eaten: the `]` belongs to [`end_seq`], which the
+        // caller of `visit_seq` runs. Eating it here would leave a
+        // fixed-length visitor — a tuple, a tuple struct, a tuple enum
+        // variant, `[T; N]`, none of which ask for another element once
+        // they have `len` — with nothing to close the array, and the
+        // enclosing container would take the `]` for its own terminator.
+        if self.c.peek() == b']' {
             return Ok(None);
         }
         if !self.first {
@@ -665,6 +672,42 @@ impl<'a, 'de> SeqAccess<'de> for ArrayAccess<'a, 'de> {
         let depth = self.depth;
         seed.deserialize(ValueDe { c: self.c, depth }).map(Some)
     }
+}
+
+/// Consume an array's `]` once `visit_seq` has returned.
+///
+/// serde drives two protocols through `SeqAccess` and only one of them
+/// reaches the closer. A collection (`Vec`, `Value`, …) calls
+/// `next_element_seed` until it returns `None`. A *fixed-length* visitor —
+/// a tuple, a tuple struct, a tuple enum variant, `[T; N]` — calls it
+/// exactly `len` times and returns without ever asking for another element.
+/// So the closer is consumed here, by the caller of `visit_seq`, and
+/// `next_element_seed` only peeks it. That is `serde_json`'s split between
+/// `SeqAccess::next_element_seed` and its `Deserializer::end_seq`; the
+/// inverse — eating the `]` in `next_element_seed` and letting the closer
+/// go unconsumed — handed control back to the *enclosing* container with
+/// the `]` still pending, and that container consumed it as its own
+/// terminator. `[[1,2],[3,4]]` as `Vec<(u64, u64)>` then read one pair,
+/// closed the outer `Vec` early, and reported the rest of the document as
+/// trailing characters; `{"a":[1,2],"b":3}` failed the same way one level
+/// up, at the object's `,`.
+///
+/// A surplus element is an error, never a silent truncation: `[1,2,3]` into
+/// a 2-tuple is rejected, as `serde_json` rejects it.
+fn end_seq(c: &mut Cursor<'_>) -> Result<()> {
+    c.skip_ws();
+    if c.eat(b']') {
+        return Ok(());
+    }
+    let at = c.pos;
+    if c.eat(b',') {
+        c.skip_ws();
+        if c.peek() == b']' {
+            return Err(err(c.pos, "trailing comma in array"));
+        }
+        return Err(err(at, "trailing characters in array"));
+    }
+    Err(err(at, "expected ',' or ']' in array"))
 }
 
 // =====================================================================
@@ -776,7 +819,11 @@ impl<'de> de::VariantAccess<'de> for UnitPayload {
     fn tuple_variant<V: Visitor<'de>>(self, _l: usize, _v: V) -> Result<V::Value> {
         Err(err(0, "expected a unit variant"))
     }
-    fn struct_variant<V: Visitor<'de>>(self, _f: &'static [&'static str], _v: V) -> Result<V::Value> {
+    fn struct_variant<V: Visitor<'de>>(
+        self,
+        _f: &'static [&'static str],
+        _v: V,
+    ) -> Result<V::Value> {
         Err(err(0, "expected a unit variant"))
     }
 }
@@ -831,7 +878,10 @@ impl<'a, 'de> de::VariantAccess<'de> for Payload<'a, 'de> {
     type Error = Error;
 
     fn unit_variant(self) -> Result<()> {
-        Err(err(self.c.pos, "expected a newtype, tuple or struct variant"))
+        Err(err(
+            self.c.pos,
+            "expected a newtype, tuple or struct variant",
+        ))
     }
 
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value> {
@@ -899,8 +949,8 @@ mod tests {
                 (format!("{a}é"), "utf-8"),
             ] {
                 let src = format!("\"{body}\"");
-                let got = scan(src.as_bytes())
-                    .unwrap_or_else(|| panic!("{why} pad={pad} did not scan"));
+                let got =
+                    scan(src.as_bytes()).unwrap_or_else(|| panic!("{why} pad={pad} did not scan"));
                 assert!(!got.1, "{why} at pad={pad} was reported simple");
             }
             // A raw control byte, which cannot go through format!.
