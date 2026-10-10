@@ -224,10 +224,7 @@ impl StrictParser {
 
     fn run(&mut self, input: &[u8]) -> Result<(), Error> {
         if input.len() > MAX_INPUT_LEN {
-            return Err(Error {
-                offset: MAX_INPUT_LEN,
-                kind: ErrorKind::InputTooLarge,
-            });
+            return Err(input_too_large());
         }
 
         self.si.clear();
@@ -794,14 +791,38 @@ fn hex4(bytes: Option<&[u8]>) -> Option<u16> {
     Some(v)
 }
 
+/// The error an input longer than [`MAX_INPUT_LEN`] earns, wherever the
+/// length is checked — before any buffer is sized for it.
+fn input_too_large() -> Error {
+    Error {
+        offset: MAX_INPUT_LEN,
+        kind: ErrorKind::InputTooLarge,
+    }
+}
+
 /// One-shot validating parse into an owned pool.
 pub fn parse_to_pool(input: &[u8]) -> Result<Pool, Error> {
+    // Before `with_capacity`: it would size buffers for MAX_INPUT_LEN and
+    // the allocation itself would abort where this must return an error.
+    // `workspace::parse_to_pool` guards the same way.
+    if input.len() > MAX_INPUT_LEN {
+        return Err(input_too_large());
+    }
     let mut p = StrictParser::with_capacity(input.len());
     p.run(input)?;
     Ok(p.pool.clone())
 }
 
 /// Validate without building anything the caller keeps.
+///
+/// Pre-sizes the parser for `input` — four allocations (structural index,
+/// node pool, depth stack, kind stack), with no mid-scan regrowth on
+/// valid input; a loop over many inputs should still prefer a reused
+/// [`StrictParser::validate`], which amortises even the pre-sizing.
 pub fn validate(input: &[u8]) -> Result<(), Error> {
-    StrictParser::new().validate(input)
+    // Same guard as `parse_to_pool`, for the same reason.
+    if input.len() > MAX_INPUT_LEN {
+        return Err(input_too_large());
+    }
+    StrictParser::with_capacity(input.len()).validate(input)
 }

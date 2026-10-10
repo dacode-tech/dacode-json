@@ -272,7 +272,9 @@ pub type ValueRef<'a> = crate::query::Value<'a>;
 
 /// Check that `input` is valid JSON.
 ///
-/// Allocates a parser per call; use [`Parser::validate`] in a loop.
+/// Pre-sizes its parser for the input — four allocations, no mid-scan
+/// regrowth on valid input; use [`Parser::validate`] in a loop to
+/// amortise even those.
 pub fn validate(input: &[u8]) -> Result<()> {
     Ok(crate::strict::validate(input)?)
 }
