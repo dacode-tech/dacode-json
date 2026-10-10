@@ -144,6 +144,10 @@ required-features = ["vela-compat"]
 name = "onepass"
 required-features = ["vela-compat"]
 
+[[test]]
+name = "rawjson_trust"
+required-features = ["raw_value"]
+
 [[bench]]
 name = "parse"
 harness = false

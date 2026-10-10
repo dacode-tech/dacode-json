@@ -497,6 +497,17 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
         // validated value (reusing the ignored-any walk) to find where it ends,
         // then hand the span to the visitor verbatim. Byte-exact, unlike the
         // pool deserializer, which re-serialises — see `crate::raw`.
+        //
+        // The walk is also the validation: it checks the span's strings
+        // (escapes, control bytes, UTF-8), numbers, literals, structure and
+        // depth at least as strictly as `crate::validate` does, so the span
+        // goes to the visitor through the crate-private trusted channel
+        // (`raw::TrustedStr` -> `visit_newtype_struct`) rather than being
+        // re-validated. The `from_utf8` below is only the `&[u8]`→`&str`
+        // conversion — every string in the span was UTF-8-validated by the
+        // walk and every other byte in it is ASCII, so its error branch is
+        // unreachable here. It stays because there is no safe unchecked
+        // conversion, and this path is `unsafe`-free.
         #[cfg(feature = "raw_value")]
         if name == crate::raw::TOKEN {
             let ValueDe { c, depth } = self;
@@ -513,7 +524,7 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
                 .ok_or_else(|| err(start, "raw value span out of range"))?;
             let text = core::str::from_utf8(span)
                 .map_err(|_| err(start, "raw value is not valid UTF-8"))?;
-            return visitor.visit_borrowed_str(text);
+            return visitor.visit_newtype_struct(crate::raw::TrustedStr(text));
         }
         #[cfg(not(feature = "raw_value"))]
         let _ = name;

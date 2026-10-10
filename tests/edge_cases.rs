@@ -289,6 +289,48 @@ fn overflow_to_infinity_is_rejected() {
     }
 }
 
+/// An integer literal long enough to overflow f64 is the same error, and
+/// the *ignored* field paths must agree with the value paths on it.
+///
+/// `validate_number` once skipped the range check for integers on the
+/// theory that "only floats can overflow" — false past `u64`'s 20 digits,
+/// where a literal still overflows f64 exactly like `1e400` does. That let
+/// a skipped field accept a number `strict` and `parse_number` both
+/// reject, which is also the one hole in the `RawJson` capture path's
+/// trust contract (`raw::RawJson::from_validated_str`).
+#[test]
+fn overflow_to_infinity_is_rejected_in_ignored_fields_too() {
+    let huge = format!("[{}]", "9".repeat(400));
+    let fits = format!("[{}]", "9".repeat(20)); // u64::MAX is 20 digits
+    for doc in [&huge, &fits] {
+        let expect_err = doc == &huge;
+        // The two deserializers that skip fields share `validate_number`.
+        let direct = dacode_json::direct::from_slice::<serde::de::IgnoredAny>(doc.as_bytes());
+        assert_eq!(
+            direct.is_err(),
+            expect_err,
+            "direct on {} digits",
+            doc.len() - 2
+        );
+        let mut idx = dacode_json::stream::Index::default();
+        let stream =
+            dacode_json::stream::from_slice_with::<serde::de::IgnoredAny>(&mut idx, doc.as_bytes());
+        assert_eq!(
+            stream.is_err(),
+            expect_err,
+            "stream on {} digits",
+            doc.len() - 2
+        );
+        // And the verdict matches the validating parser's.
+        assert_eq!(
+            strict::validate(doc.as_bytes()).is_err(),
+            expect_err,
+            "strict on {} digits",
+            doc.len() - 2
+        );
+    }
+}
+
 #[test]
 fn negative_zero_keeps_its_sign() {
     let mut p = StrictParser::new();

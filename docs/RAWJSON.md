@@ -46,10 +46,16 @@ raw.get();          // &str
 raw.as_bytes();     // &[u8]
 ```
 
-Construction **validates** (`crate::validate`). That is what makes the splice
-safe: a `RawJson` always holds exactly one well-formed JSON value, so embedding
-it cannot corrupt the surrounding document. `Box<str>` rather than `Box<[u8]>`
-because JSON is UTF-8 text and `str` makes `Display`/`Debug`/the splice natural.
+Construction **validates** (`crate::validate`) — every public constructor. The
+one exception is crate-private: the capture path's trusted constructor, handed
+a span the positional deserializer just validated while walking past it.
+Re-validating that span was a second full parse — measured at 98% of capture's
+overhead over the ignore floor — so it travels a private channel
+(`raw::TrustedStr`) that no generic serde route can produce, and debug builds
+assert its contract. Validation is what makes the splice safe: a `RawJson`
+always holds exactly one well-formed JSON value, so embedding it cannot
+corrupt the surrounding document. `Box<str>` rather than `Box<[u8]>` because
+JSON is UTF-8 text and `str` makes `Display`/`Debug`/the splice natural.
 
 It serializes like any other value — nest it in a `#[derive(Serialize)]` struct
 and the field comes out as raw JSON, not a quoted string:
@@ -86,7 +92,7 @@ by each. This is inherent to their representations, not an oversight:
 
 | deserializer | entry points | capture | why |
 |---|---|---|---|
-| **positional** (`direct.rs`) | `from_str`, `from_slice`, `from_reader`, `Parser::deserialize` | **byte-exact** | it walks the input by byte offset; record `start`, skip one validated value (`IgnoredAny`), slice `input[start..pos]` |
+| **positional** (`direct.rs`) | `from_str`, `from_slice`, `from_reader`, `Parser::deserialize` | **byte-exact** | it walks the input by byte offset; record `start`, skip one validated value (`IgnoredAny`), slice `input[start..pos]`, hand the span to the visitor through the crate-private trusted channel |
 | **pool** (`de.rs`) | `de::from_doc`, `de::from_slice` | **canonical** (`to_json`) | the node pool stores object/array nodes as *(first-child-index, count)*, **not** a byte span — the source range is not retained, so it re-serializes |
 | **stream** (`stream/deserializer.rs`) | `stream::from_slice_with` | **error** | not wired; a `RawJson` field is a clean `invalid_type` error, never corruption |
 
@@ -109,15 +115,27 @@ it; until then it fails loudly rather than guessing.
 - **No panics.** `raw.rs` and the `ser`/`de`/`direct` hooks compile under the
   crate's `#![deny(clippy::unwrap_used, expect_used, panic, unreachable,
   indexing_slicing, …)]`. Spans are sliced with `.get(..)`, UTF-8 with
-  `from_utf8`, both erroring rather than trapping.
+  `from_utf8`, both erroring rather than trapping. The crate-private trusted
+  constructor's `debug_assert` can fire only through an internal bug, never
+  from a public entry point with caller-chosen text.
 - **Valid by construction.** Every `RawJson` holds one validated JSON value, so
-  the verbatim splice cannot emit a malformed document.
+  the verbatim splice cannot emit a malformed document. The capture path's
+  crate-private trusted constructor asserts its contract in debug builds; the
+  pool path keeps validating, because a faithful-parser `Doc` can re-serialise
+  to invalid JSON. Unvalidated text that reaches the visitor through any
+  generic serde route — map keys, flat string slots, a foreign deserializer —
+  lands in the validating entries and errors cleanly
+  (`tests/rawjson_trust.rs`).
 - **Owned and thread-safe.** `Box<str>` is `Clone + Send + Sync + 'static`, so a
   `RawJson` lives in an event that is stored, broadcast, and persisted without
   borrowing the input.
-- **Default build untouched.** Everything is `#[cfg(feature = "raw_value")]`;
-  with the feature off, the serializer/deserializer hot paths are byte-identical
-  to before and the 202-test suite is unaffected.
+- **Default build untouched by `RawJson` itself.** `src/raw.rs` and the
+  `ser`/`de`/`direct` hooks are `#[cfg(feature = "raw_value")]`; with the
+  feature off, those paths are byte-identical to before. One exception ships
+  in every build: the number-strictness fix that makes the capture trust sound
+  (`validate_number`'s integer range check, `src/stream/mod.rs`) is not gated —
+  it tightens the ignored-field path for integer literals long enough to
+  overflow f64 in all builds, and `tests/edge_cases.rs` covers it by default.
 
 ## 6. Where it loses
 
@@ -136,6 +154,7 @@ it; until then it fails loudly rather than guessing.
 
 ```bash
 cargo test --features raw_value --lib raw::    # the RawJson unit tests
+cargo test --features raw_value --test rawjson_trust  # the trust boundary, per route
 cargo test --features raw_value --doc raw      # the module doc example
 cargo bench --features raw_value --bench rawjson # splice vs re-encode, capture cost
 cargo clippy --all-targets --features raw_value

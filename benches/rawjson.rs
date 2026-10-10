@@ -23,9 +23,9 @@
 //! * `rawjson_capture_de` — deserialize the same wire bytes into a `RawJson`
 //!   field, into a parsed field, and into a struct that ignores the field
 //!   entirely. The third row is the floor: it pays to walk past the bytes and
-//!   keeps nothing. Capture sits ~2.6× above that floor, but the delta is an
-//!   **upper bound** on the price of keeping them and not the price; the group's
-//!   own docs decompose it.
+//!   keeps nothing. Capture sits a few percent above that floor — the UTF-8
+//!   conversion plus the owned copy — which is close to the intrinsic price
+//!   of keeping the bytes; the group's own docs decompose it.
 //!
 //! Payload size is swept because the shape of the win is the interesting part.
 //! Both arms are linear in payload bytes and the re-encode side has no
@@ -144,9 +144,12 @@ struct Reencoded<'a> {
     args: &'a serde_json::Value,
 }
 
-/// Capture: walk the span to find its end, then validate and copy it out
-/// (`src/direct.rs` -> `src/raw.rs`). The walk validates as it goes, which is
-/// the redundancy `bench_capture_deserialize` prices.
+/// Capture: walk the span to find its end — validating as it goes — then
+/// convert and copy it out (`src/direct.rs` -> `src/raw.rs`). The walk's
+/// validation is what lets the copy trust the bytes: the span goes to the
+/// visitor through the crate-private trusted channel
+/// (`raw::TrustedStr` -> `visit_newtype_struct`) and is wrapped without a
+/// second parse.
 #[derive(Deserialize)]
 struct Captured {
     seq: u64,
@@ -501,31 +504,37 @@ fn bench_splice_serialize(c: &mut Criterion) {
 /// on `dacode-json`'s positional deserializer, with `serde_json` as the reference
 /// for the two of the three it can also do.
 ///
-/// `dacode_json_raw` over `dacode_json_ignored` is an **upper bound** on the price of
-/// keeping the payload, not the price. The floor row walks past the bytes and
-/// keeps nothing; capture walks them and then pays for them a second time. At
-/// 853 KB the delta is ~3.2 ms (5.2 against 2.0, `tools/isolate.sh`), and it
-/// decomposes as:
+/// `dacode_json_raw` over `dacode_json_ignored` is the price of keeping the
+/// payload, and since the redundant second validation was removed it is close
+/// to the intrinsic price. At 853 KB the delta is ~50 µs on a ~2.1 ms floor
+/// (2.3%, `tools/isolate.sh`), and it decomposes as:
 ///
-/// * ~3.2 ms — `RawJson::from_string` re-validates the span it was handed
-///   (`src/raw.rs:93-96` -> `crate::validate`), over bytes `src/direct.rs:504`
-///   had already validated while walking them with `IgnoredAny`. That call also
-///   builds a fresh `StrictParser`, index and pool included, per invocation
-///   (`src/api.rs:276`): 20 of capture's 22 allocations.
-/// * 14 µs — the memcpy. This is the part that is inherent to keeping the bytes,
-///   and it is 0.4% of the delta.
+/// * ~35 µs — the `&[u8]`→`&str` conversion. Unavoidable without `unsafe`:
+///   the span is bytes, `RawJson` holds a `str`, and `core::str::from_utf8`
+///   is the only safe bridge. The walk already proved the span is UTF-8 —
+///   every string in it was validated, every other byte in it is ASCII — so
+///   the check inside the conversion is redundant, but it cannot be
+///   separated from the conversion itself.
+/// * ~14 µs — the memcpy into the owned `Box<str>`. Inherent to keeping the
+///   bytes, and 0.7% of the floor.
 ///
-/// So read the row as *capture as implemented today*. Removing the redundant
-/// pass is a `src/` change and deliberately not made here — a benchmark may not
-/// alter what it measures — but the ratio must not be quoted as if the overhead
-/// were intrinsic. A caller weighing capture against *ignoring the field* is
-/// asked to pay ~2.6× for something that ought to cost ~0.7% above that floor
-/// (14 µs of memcpy over the 2.0 ms walk); a caller weighing it against *building
-/// a tree* already wins by 1.5×, and would win by more.
+/// What was here before the fix: capture sat ~2.7× above the floor, because
+/// `RawJson::from_string` re-validated the span — a full `crate::validate`
+/// parse with a fresh `StrictParser`, 20 of capture's 22 allocations — over
+/// bytes the ignored-any walk had already validated. Routing the span
+/// through the visitor's crate-private trusted channel (`visit_newtype_struct`
+/// with `raw::TrustedStr`) into the debug-asserted `RawJson::from_validated_str`
+/// removed it: 146 → 385 MiB/s (2.6×) on the 853 KB row, on the machine that
+/// measured it. The strictness that made the trust sound is pinned by tests:
+/// number range and depth by dedicated differential tests, strings by the
+/// conformance corpus both parsers must agree on. The channel itself is
+/// private, so no generic serde route — map keys, flat string slots, a
+/// foreign deserializer — can reach the trusted constructor; those land in
+/// the validating entries (`tests/rawjson_trust.rs`).
 ///
 /// Inherent and visible regardless: capture allocates 2 objects against the
-/// tree's 114 080 for the same 873 KB — 22 as implemented today, 20 of them the
-/// redundant pass — while staying byte-exact where the tree is not.
+/// tree's 114 080 for the same 873 KB, while staying byte-exact where the
+/// tree is not.
 fn bench_capture_deserialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("rawjson_capture_de");
     group.sample_size(30);

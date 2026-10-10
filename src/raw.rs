@@ -32,6 +32,15 @@
 //! Both capturing paths are deterministic, so the byte-stability guarantee
 //! holds either way: capture once, splice the same bytes forever.
 //!
+//! # The trust boundary
+//!
+//! The positional handoff is *trusted* — the walk validated the span — and
+//! travels a crate-private channel ([`TrustedStr`]) that no generic serde
+//! route can produce. Every other route into a `RawJson` — map keys, flat
+//! string slots, the pool's canonical re-serialisation, a foreign
+//! deserializer — lands in the validating `visit_str`/`visit_string`
+//! entries and errors cleanly on text that is not JSON.
+//!
 //! # Example
 //!
 //! ```
@@ -93,6 +102,54 @@ impl RawJson {
     pub fn from_string(json: String) -> crate::Result<Self> {
         crate::validate(json.as_bytes())?;
         Ok(RawJson(json.into_boxed_str()))
+    }
+
+    /// Wrap text already known to be one well-formed JSON value, without
+    /// validating it again.
+    ///
+    /// Crate-private on purpose: the public API stays validating-only, so
+    /// the crate's no-panics guarantee holds as stated — this function's
+    /// `debug_assert` can fire only through an internal bug, never from a
+    /// public entry point with caller-chosen text.
+    ///
+    /// The capture path's constructor. The positional deserializer
+    /// ([`crate::direct`]) validates a value while walking past it, then
+    /// hands the exact span through [`TrustedStr`]; routing those bytes
+    /// through [`from_string`](Self::from_string) would parse them a
+    /// second time for a verdict the walk already established — measured
+    /// as nearly all of capture's overhead over the ignore floor.
+    ///
+    /// # Contract
+    ///
+    /// `json` must be exactly one well-formed JSON value — the guarantee
+    /// [`from_string`](Self::from_string) buys by validating. Debug builds
+    /// assert it with a real validation, so an internal routing mistake
+    /// fails in tests rather than shipping a `RawJson` whose verbatim
+    /// splice could corrupt a host document. Release builds skip the
+    /// check: that is the point of the constructor.
+    ///
+    /// The pool path must not use this. A `Doc` from the *faithful* parser
+    /// ([`crate::parse_to_pool`]) can re-serialise to text that is not
+    /// valid JSON, so [`from_doc`](Self::from_doc) keeps validating — see
+    /// its documentation for the bug that established that.
+    pub(crate) fn from_validated_str(json: &str) -> Self {
+        // `validate` refuses input over `MAX_INPUT_LEN` (its positions are
+        // `u32`) — a size limit of the strict parser, not a JSON rule, and
+        // the first thing it checks, so asking costs O(1). An oversized
+        // span therefore does not break this contract; the assert accepts
+        // exactly that one rejection and no other.
+        debug_assert!(
+            match crate::validate(json.as_bytes()) {
+                Ok(()) => true,
+                Err(crate::Error::Parse(e)) => {
+                    json.len() > crate::scan::MAX_INPUT_LEN
+                        && e.kind == crate::strict::ErrorKind::InputTooLarge
+                }
+                Err(_) => false,
+            },
+            "from_validated_str: not one well-formed JSON value"
+        );
+        RawJson(Box::from(json))
     }
 
     /// Wrap a value parsed from a document, re-serialised canonically.
@@ -188,9 +245,38 @@ impl<'de> Visitor<'de> for RawJsonVisitor {
         formatter.write_str("a JSON value to capture verbatim")
     }
 
-    // `dacode-json`'s deserializer special-cases `TOKEN` in
-    // `deserialize_newtype_struct` and hands the canonical text back through
-    // `visit_string`/`visit_str`.
+    // The trust boundary, in one place. `dacode-json`'s deserializers
+    // special-case `TOKEN` in `deserialize_newtype_struct` and hand the
+    // captured text back through these methods:
+    //
+    // * `visit_newtype_struct` — the capture handoff. The positional
+    //   deserializer calls it with [`TrustedStr`], a crate-private
+    //   deserializer holding a span its walk just validated. The
+    //   extraction re-enters `deserialize_newtype_struct` with
+    //   [`StrCapture`], which only `TrustedStr` answers: a foreign
+    //   deserializer that reaches this method routes the re-entry to its
+    //   own `visit_newtype_struct(StrCapture)` and gets the same clean
+    //   error serde's default gave before this channel existed. (A
+    //   deserializer that called `visit_newtype_struct` here and then
+    //   *forwarded* the re-entry to `deserialize_any` could still reach
+    //   the trusted constructor — but that requires behaving differently
+    //   across two calls of the same method, which no in-tree or sane
+    //   foreign deserializer does. `serde_json`'s sentinel-map design
+    //   carries the same class of adversarial residual.)
+    // * `visit_str` / `visit_string` — everything else, and they keep
+    //   validating. Map keys, flat string slots and any borrowed str a
+    //   generic `forward_to_deserialize_any!` routes here arrive
+    //   unvalidated; the pool path's canonical re-serialisation arrives
+    //   as an owned `String` and must stay checked, because a
+    //   faithful-parser `Doc` can re-serialise to invalid JSON.
+    fn visit_newtype_struct<D>(self, deserializer: D) -> Result<RawJson, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        let text = deserializer.deserialize_newtype_struct(TOKEN, StrCapture)?;
+        Ok(RawJson::from_validated_str(text))
+    }
+
     fn visit_str<E>(self, v: &str) -> Result<RawJson, E>
     where
         E: de::Error,
@@ -203,6 +289,65 @@ impl<'de> Visitor<'de> for RawJsonVisitor {
         E: de::Error,
     {
         RawJson::from_string(v).map_err(de::Error::custom)
+    }
+}
+
+/// The capture handoff: a span the positional deserializer validated while
+/// walking past it, handed to [`RawJsonVisitor::visit_newtype_struct`].
+///
+/// `pub(crate)` is the trust boundary: no code outside the crate can
+/// construct one, so no generic serde route — map keys, flat string slots,
+/// a foreign deserializer — can reach the trusted constructor with text
+/// nobody vouched for.
+pub(crate) struct TrustedStr<'de>(pub(crate) &'de str);
+
+impl<'de> de::Deserializer<'de> for TrustedStr<'de> {
+    type Error = crate::stream::Error;
+
+    /// The one accepting method: what the capture handoff calls.
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        visitor.visit_borrowed_str(self.0)
+    }
+
+    /// Everything else fails closed, so a mis-routed call cannot turn into
+    /// an accepting path.
+    fn deserialize_any<V: Visitor<'de>>(self, _visitor: V) -> Result<V::Value, Self::Error> {
+        Err(crate::stream::Error::from_parts(
+            0,
+            "expected the raw value handoff",
+        ))
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct seq tuple tuple_struct map
+        struct enum identifier ignored_any
+    }
+}
+
+/// Extracts the span from [`TrustedStr`].
+///
+/// Accepts only `visit_borrowed_str`, which only `TrustedStr`'s handoff
+/// calls; every other method falls to serde's erroring defaults, so a
+/// foreign deserializer routed here by mistake fails closed.
+struct StrCapture;
+
+impl<'de> Visitor<'de> for StrCapture {
+    type Value = &'de str;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("the trusted raw value handoff")
+    }
+
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(v)
     }
 }
 
@@ -379,5 +524,140 @@ mod tests {
         let once = crate::to_string(&e).unwrap();
         let twice = crate::to_string(&crate::from_str::<Event>(&once).unwrap()).unwrap();
         assert_eq!(once, twice);
+    }
+
+    // --- the trusted constructor ----------------------------------------
+
+    #[test]
+    fn trusted_constructor_is_byte_identical_to_the_validating_path() {
+        // Representative shapes: composites, scalars, escapes, non-ASCII,
+        // every number spelling, whitespace-heavy formatting. The trusted
+        // path must hand back exactly what the validating path does.
+        for src in [
+            r#"{"a":1,"b":[true,null,"x"]}"#,
+            "{ \"a\" : [ 1 , 2 ] }",
+            r#""é 😀 \n""#,
+            "[1,-0,1.5,1e2,0.1,12345678901234567890]",
+            "42",
+            "true",
+            "null",
+            "[]",
+            "{}",
+            r#""""#,
+        ] {
+            let trusted = RawJson::from_validated_str(src);
+            let validating = src
+                .parse::<RawJson>()
+                .unwrap_or_else(|e| panic!("{src}: {e}"));
+            assert_eq!(trusted, validating, "on {src}");
+            assert_eq!(trusted.get(), src, "on {src}");
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "from_validated_str")]
+    fn trusted_constructor_asserts_its_contract_in_debug() {
+        // The contract is "caller already validated"; the debug assert is
+        // what pins it. `#[cfg(debug_assertions)]` because the assert is
+        // compiled out in release, where a `#[should_panic]` test would
+        // fail for the wrong reason — the repo otherwise has no
+        // `should_panic` tests, and this is why.
+        let _ = RawJson::from_validated_str("{not json");
+    }
+
+    #[test]
+    fn capture_rejects_numbers_that_validate_rejects() {
+        // The audit behind the trusted capture: the walk's grammar must be
+        // at least as strict as `crate::validate`'s, or a captured span
+        // would break `from_validated_str`'s contract. Integer literals
+        // long enough to overflow f64 (>= 310 digits) were the one case
+        // where it was not — `validate_number` skipped them on the theory
+        // that only floats overflow.
+        let wire = format!(r#"{{"name":"x","args":[{}]}}"#, "9".repeat(400));
+        assert!(
+            crate::from_str::<Event>(&wire).is_err(),
+            "a 400-digit integer overflows f64 and must not capture"
+        );
+        // 20 digits fit `u64` and stay finite as f64: accepted, and the
+        // capture is byte-exact.
+        let wire = format!(r#"{{"name":"x","args":[{}]}}"#, "9".repeat(20));
+        let e = crate::from_str::<Event>(&wire).unwrap();
+        assert_eq!(e.args.get(), &format!("[{}]", "9".repeat(20)));
+    }
+
+    #[test]
+    fn visit_str_still_validates_untrusted_text() {
+        // `visit_borrowed_str` is the trusted handoff; `visit_str` remains
+        // the validating entry for a str nobody vouched for — a future
+        // capture wiring, or a foreign deserializer that special-cases
+        // `TOKEN`. It must not inherit the trust.
+        use serde::de::Visitor as _;
+        let ok: Result<RawJson, crate::de::Error> = RawJsonVisitor.visit_str(r#"{"a":1}"#);
+        assert_eq!(ok.expect("valid").get(), r#"{"a":1}"#);
+        let bad: Result<RawJson, crate::de::Error> = RawJsonVisitor.visit_str("{not json");
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn visit_borrowed_str_still_validates_untrusted_text() {
+        // The borrowed hook is what `forward_to_deserialize_any!` routes
+        // map keys and flat string slots through. There is deliberately no
+        // override here, so serde's default forwards to the validating
+        // `visit_str` — the round-1 bug was trusting this hook.
+        use serde::de::Visitor as _;
+        let ok: Result<RawJson, crate::de::Error> = RawJsonVisitor.visit_borrowed_str(r#"{"a":1}"#);
+        assert_eq!(ok.expect("valid").get(), r#"{"a":1}"#);
+        let bad: Result<RawJson, crate::de::Error> = RawJsonVisitor.visit_borrowed_str("é");
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn capture_depth_is_pinned_against_validate() {
+        // The audit's depth dimension, as a test. The walk's MAX_DEPTH=128
+        // is stricter than validate's STACK_MAX=256, so every span the walk
+        // accepts is accepted by validate — the direction the trusted
+        // constructor's debug-assert depends on. A captured span, nested
+        // one object deep, tops out at 128 internal levels.
+        for depth in [1usize, 63, 127, 128] {
+            let span = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+            let wire = format!(r#"{{"name":"x","args":{span}}}"#);
+            let e: Event = crate::from_str(&wire).unwrap_or_else(|e| panic!("depth {depth}: {e}"));
+            assert_eq!(e.args.get(), span.as_str(), "depth {depth}");
+        }
+        // The stricter direction: deep nests are valid JSON that `validate`
+        // accepts but the walk refuses, so capture never sees them. Bare
+        // documents ride one level past the composite check (the innermost
+        // scalar skips it), so the boundary is 130, not 129; 257 is past
+        // validate's own limit.
+        for depth in [130usize, 200, 256] {
+            let doc = format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+            assert!(
+                crate::validate(doc.as_bytes()).is_ok(),
+                "depth {depth}: validate accepts"
+            );
+            assert!(
+                crate::from_str::<serde::de::IgnoredAny>(&doc).is_err(),
+                "depth {depth}: the walk is stricter"
+            );
+        }
+        let too_deep = format!("{}1{}", "[".repeat(257), "]".repeat(257));
+        assert!(crate::validate(too_deep.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn capture_path_exercises_the_trusted_constructor_in_debug() {
+        // In a debug build every capture below runs the constructor's
+        // `debug_assert` — a real `crate::validate` over the captured span —
+        // so the whole existing capture test set doubles as a check that
+        // the walk's validation implies `validate`'s acceptance. This test
+        // says so out loud, and adds the shapes the others do not: deep
+        // nesting near the walk's limit, and escaped non-ASCII strings.
+        let deep = format!("{}1{}", "[".repeat(100), "]".repeat(100));
+        let src = format!(r#"{{"name":"x","args":{deep}}}"#);
+        let e: Event = crate::from_str(&src).unwrap();
+        assert_eq!(e.args.get(), deep.as_str());
+        let e: Event = crate::from_str(r#"{"name":"x","args":"é \n é"}"#).unwrap();
+        assert_eq!(e.args.get(), r#""é \n é""#);
     }
 }

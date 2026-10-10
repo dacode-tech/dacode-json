@@ -292,8 +292,20 @@ pub(crate) fn number_syntax(s: &[u8], start: usize) -> Result<Syntax> {
 #[cfg(feature = "serde")]
 pub(crate) fn validate_number(input: &[u8], start: usize, end: usize) -> Result<()> {
     let s = input.get(start..end).unwrap_or(&[]);
-    if number_syntax(s, start)?.is_float() {
-        // Only floats can overflow, and only then must we actually parse.
+    let n = number_syntax(s, start)?;
+    // A float, or an integer longer than `u64::MAX`'s 20 digits, can
+    // overflow f64; both need the range check. Shorter integers are below
+    // 10^20 and always finite, so the parse is skipped for them. Integer
+    // literals were once exempt on the theory that only floats overflow —
+    // false for a 400-digit literal, which `parse_number` and `strict`
+    // both reject, and which the `RawJson` capture path's trust contract
+    // (`raw::RawJson::from_validated_str`) then had to trip over.
+    //
+    // This is a deliberate divergence from serde_json's *ignored* path,
+    // which accepts such literals (its value path rejects them, as
+    // `parse_number` does): the ignored path here validates like the
+    // value path, which is also what the capture trust requires.
+    if n.is_float() || n.int(s).len() > 20 {
         if let Ok(t) = core::str::from_utf8(s) {
             if t.parse::<f64>().map(|v| !v.is_finite()).unwrap_or(true) {
                 return Err(Error::at(start, "number out of range"));
