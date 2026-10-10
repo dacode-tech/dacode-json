@@ -512,7 +512,7 @@ byte classifiers. Nothing in that set allocates, on any path —
 malformed inputs.
 
 `flat` is split rather than gated: reading a buffer needs no allocator, and
-only the builders do. Build on a host, `mmap` on the device — 2 118 bytes
+only the builders do. Build on a host, `mmap` on the device — 2 054 bytes
 linked, for random access to a whole document.
 
 `tools/check-features.sh` builds every combination, plus
@@ -523,23 +523,24 @@ each tier and the decisions behind the split.
 
 ### Code size
 
-Linked for bare-metal Cortex-M4F, `opt-level = "z"`, doing one job — parse
-a fixed buffer and sum a field. `.text` + `.rodata`, floor subtracted:
+Linked for bare-metal Cortex-M4F, `opt-level = "z"`, `rustc 1.98.1`,
+doing one job — parse a fixed buffer and sum a field. `.text` +
+`.rodata`, floor subtracted:
 
 | | bytes |
 |---|---:|
-| `pull`, locating fields only | **1 742** |
-| `flat`, read-only | **2 118** |
-| `pull` + `as_int::<i32>` | **2 134** |
-| `pull` + `as_fixed::<i32>(3)` | **2 214** |
-| `write` | **5 896** |
-| `pull` + `as_i64` | 24 486 |
-| `serde_json` (`no_std` + `alloc`) | 29 964 |
-| `dacode-json` typed (`serde` + `alloc`) | 43 508 |
+| `pull`, locating fields only | **1 804** |
+| `flat`, read-only | **2 054** |
+| `pull` + `as_int::<i32>` | **2 130** |
+| `pull` + `as_fixed::<i32>(3)` | **2 258** |
+| `write` | **5 660** |
+| `pull` + `as_i64` | 24 402 |
+| `serde_json` (`no_std` + `alloc`) | 30 570 |
+| `dacode-json` typed (`serde` + `alloc`) | 44 422 |
 | yyjson (C, reader only) | 69 316 |
 | simdjson, sonic-rs | neither compiles for the target |
 
-The gap between the fractional rows — 2 214 and 24 486 — is `core`'s
+The gap between the fractional rows — 2 258 and 24 402 — is `core`'s
 correctly-rounded float parser. 22 KB, reached because `as_i64` and
 `as_f64` must be able to parse `1.5` even when the answer is an integer.
 The two accessors that cannot reach it read the digits into the width you
@@ -568,7 +569,7 @@ other way: it is byte-identical at one call site and 664 bytes worse at
 three.
 
 yyjson is the largest thing in the table because `yyjson_read_opts` is a
-single 47 KB `always_inline` function. Method, caveats and the full
+single 39 KB `always_inline` function. Method, caveats and the full
 breakdown: [`docs/SIZE.md`](docs/SIZE.md). Reproduce with `tools/size.sh`
 and `tools/width.sh`.
 

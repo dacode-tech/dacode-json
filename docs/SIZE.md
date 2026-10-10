@@ -8,11 +8,17 @@ width question, on 16-bit MSP430 and 8-bit AVR.
 
 Reproduce with `tools/size.sh [z|s|3]` and `tools/width.sh`.
 
+Toolchain: `rustc 1.98.1 (48a229cea 2026-09-01)` — every `size.sh` row
+below was re-measured on it. The tables previously mixed `rustc 1.95.0`
+figures with three rows refreshed on 1.98, which is why almost nothing
+reproduced on the installed toolchain; `pullint3` and yyjson were the
+only rows that already matched.
+
 The short version: on a bare-metal target the JSON library is not what
-costs. `dacode_json::pull`'s own code is 2 544 bytes; the binary around it
+costs. `dacode_json::pull`'s own code is 2 532 bytes; the binary around it
 was 24 KB, and 22 of those were `core`'s float parser, reached through
 an accessor that had to be able to return an `f64`. `Raw::as_int::<T>()`
-is the fix, and it takes the binary to 2 102 bytes.
+is the fix, and it takes the binary to 2 130 bytes.
 
 ---
 
@@ -61,15 +67,15 @@ Bytes of `.text` + `.rodata`, with the floor subtracted.
 
 | | total | Rust runtime | the library |
 |---|---:|---:|---:|
-| `pull`, locating fields only | **1 742** | 130 | 1 612 |
-| `flat`, read-only | **2 118** | 858 | 1 260 |
-| `pull` + `as_int::<i32>` | **2 134** | 122 | 2 012 |
-| `pull` + `as_fixed::<i32>(3)` | **2 214** | 122 | 2 092 |
+| `pull`, locating fields only | **1 804** | 132 | 1 672 |
+| `flat`, read-only | **2 054** | 790 | 1 264 |
+| `pull` + `as_int::<i32>` | **2 130** | 122 | 2 008 |
+| `pull` + `as_fixed::<i32>(3)` | **2 258** | 122 | 2 136 |
 | `pull` + `as_int` at three widths | **2 928** | 144 | 2 784 |
-| `write` | **5 896** | 3 686 | 2 210 |
-| `pull` + `as_i64` | **24 486** | 19 496 | 4 990 |
-| `serde_json` (`no_std` + `alloc`) | **29 964** | 13 479 | 16 485 |
-| `dacode-json` typed (`serde` + `alloc`) | **43 508** | 28 875 | 14 633 |
+| `write` | **5 660** | 3 460 | 2 200 |
+| `pull` + `as_i64` | **24 402** | 19 432 | 4 970 |
+| `serde_json` (`no_std` + `alloc`) | **30 570** | 14 912 | 15 658 |
+| `dacode-json` typed (`serde` + `alloc`) | **44 422** | 30 364 | 14 058 |
 | yyjson (C, reader only) | **69 316** | 6 698 | 62 618 |
 | simdjson | — | — | does not compile |
 | sonic-rs | — | — | does not compile |
@@ -83,25 +89,26 @@ supplies it, so the total is what actually lands in flash.
 
 | | `z` | `s` | `3` |
 |---|---:|---:|---:|
-| `pull`, locating fields only | 1 742 | 2 058 | 5 228 |
-| `flat`, read-only | 2 118 | 1 302 | 1 304 |
-| `pull` + `as_int::<i32>` | 2 134 | 2 778 | 5 338 |
-| `pull` + `as_fixed::<i32>(3)` | 2 214 | 2 882 | 5 492 |
-| `pull` + `as_int`, three widths | 2 928 | 3 460 | 6 780 |
-| `write` | 5 896 | 4 196 | 4 640 |
-| `pull` + `as_i64` | 24 486 | 25 082 | 29 286 |
-| `serde_json` | 29 964 | 32 520 | 59 760 |
-| `dacode-json` typed | 43 508 | 46 992 | 81 480 |
+| `pull`, locating fields only | 1 804 | 2 054 | 5 224 |
+| `flat`, read-only | 2 054 | 1 306 | 1 308 |
+| `pull` + `as_int::<i32>` | 2 130 | 2 774 | 5 334 |
+| `pull` + `as_fixed::<i32>(3)` | 2 258 | 2 878 | 5 488 |
+| `pull` + `as_int`, three widths | 2 928 | 3 460 | 6 452 |
+| `write` | 5 660 | 4 128 | 4 572 |
+| `pull` + `as_i64` | 24 402 | 25 010 | 29 226 |
+| `serde_json` | 30 570 | 33 142 | 61 104 |
+| `dacode-json` typed | 44 422 | 47 578 | 84 524 |
 | yyjson | 69 316 | 79 402 | 113 822 |
 
-Ordering is stable across all three, with one exception: `flat` is the
-smallest thing in the table at `s` and `3` and third smallest at `z`,
+Ordering is stable across all three, with two exceptions. `flat` is the
+smallest thing in the table at `s` and `3` and second smallest at `z`,
 because it is the only reader with no parser to inline — `z` declines to
-inline its copy and links `compiler_builtins`' `memmove` (858 bytes of
+inline its copy and links `compiler_builtins`' `memmove` (790 bytes of
 runtime against 116), which the other two levels do not.
 
-`write` is smaller at `s` than at `z` for the same reason, and more of
-it: 3 686 bytes of runtime against 1 848.
+`write` is the other: smaller at `s` and `3` than at `z` — sixth at `z`
+and `s`, second smallest at `3` — for the same reason, and more of
+it: 3 460 bytes of runtime against 1 780.
 
 ---
 
@@ -109,31 +116,31 @@ it: 3 686 bytes of runtime against 1 848.
 
 ### 93% of a `pull` binary was `core`'s float parser
 
-`dacode_json::pull` summing an integer field through `as_i64` is 24 486
+`dacode_json::pull` summing an integer field through `as_i64` is 24 402
 bytes. The same code stopping at `Raw::bytes` — locating the field but
-not converting it — is 1 742. Everything in between is reached because
+not converting it — is 1 804. Everything in between is reached because
 `as_i64` goes through `parse_number`, which has to be able to answer
 `f64`, which instantiates `core`'s correctly-rounded float parser:
 
 | | bytes |
 |---|---:|
 | `core::num::dec2flt::table::POWER_OF_FIVE_128` | 10 416 |
-| `core::num::dec2flt::…::from_str` | 2 836 |
-| `dec2flt` helpers (`lemire`, `DecimalSeq`) | ~1 700 |
+| `core::num::…::FromStr::from_str` | 3 416 |
+| `dec2flt` helpers (`lemire`, `DecimalSeq`) | 2 284 |
 | soft-float `__divdf3`, `__muldf3` | 1 696 |
-| **`dacode_json::pull` itself** | **2 544** |
+| **`dacode_json::pull` itself** | **2 532** |
 
 `Raw::as_int::<T>()` is the accessor that does not. It reads the digit
 range `number_syntax` already found, accumulates in `T`, and refuses
 anything with a fraction or an exponent — so it never reaches the float
-parser, and never links it. **24 486 bytes to 2 134.**
+parser, and never links it. **24 402 bytes to 2 130.**
 
 ### A fraction does not need a float either
 
 `as_int` refuses `1.5`, which leaves a feed quoting decimals with no
 option but the 22 KB. `Raw::as_fixed::<T>(scale)` is the third reading:
-`12.34` at `scale = 2` is the integer `1234`. **2 214 bytes**, against
-24 486 for the same field through `as_f64`.
+`12.34` at `scale = 2` is the integer `1234`. **2 258 bytes**, against
+24 402 for the same field through `as_f64`.
 
 There is no new machinery. `number_syntax` was already locating the
 fraction digits in order to step over them, so returning where they are
@@ -172,6 +179,9 @@ monomorphisation axis. Measured:
 | three scales, runtime argument | 2 358 |
 | three scales, const generic | 3 022 |
 
+All four at the `as_fixed` landing, which is where the rejected
+const-generic variants existed; the runtime-argument row is 2 258 today.
+
 At one call site they are byte-identical, because a literal argument
 const-folds and the loop unrolls anyway. At three, the const generic
 costs 664 bytes to say the same thing. This is the mirror image of the
@@ -180,15 +190,15 @@ which is why it was measured rather than assumed.
 
 `docs/RESULTS.md` records that `serde_json`'s float parser is *not*
 correctly rounded, by up to 2 ULP. This is the other side of that
-ledger: `dacode-json` keeps `core`'s correct one, and 13 KB of flash is a
+ledger: `dacode-json` keeps `core`'s correct one, and 14 KB of flash is a
 real thing to weigh against 2 ULP — so the answer is to let a caller
 that does not need floats not pay for them, rather than to make the
 float parser worse.
 
 ### `flat` is the cheapest way to read a whole document
 
-2 118 bytes, of which 1 260 is the library, for random access to every
-field of every record — where `pull` at 2 134 gives you one named field
+2 054 bytes, of which 1 264 is the library, for random access to every
+field of every record — where `pull` at 2 130 gives you one named field
 per pass and nothing else.
 
 That is not a parser, which is the point. The buffer is built on a host
@@ -207,10 +217,12 @@ floor as everywhere else.
 ### An `f32` accessor would not have helped
 
 `f32::from_str` and `f64::from_str` share `POWER_OF_FIVE_128` in `core`,
-so parsing as `f32` still links the 10 416-byte table. Measured: a probe
-doing `str::parse::<f32>()` is 19 210 bytes against 24 486 for `f64` —
-it saves the soft-float arithmetic and nothing else. Narrowing the float
-is not the lever; not parsing one is.
+so parsing as `f32` still links the 10 416-byte table. Measured, at the
+commit that ran it: a probe doing `str::parse::<f32>()` is 19 210 bytes
+against 24 486 for `f64` (the `pull` row, 24 402 today — the probe
+itself was a one-off and is not in the tree) — it saves the soft-float
+arithmetic and nothing else. Narrowing the float is not the lever; not
+parsing one is.
 
 ### Width is a type parameter, and that costs nothing
 
@@ -231,7 +243,7 @@ the floor is subtracted, and all three were taken at one commit, before
 `as_fixed` added 32 bytes to every `as_int` row. The middle row's probe
 was written for the comparison and not kept, so the table is left as it
 was measured rather than half-refreshed; the current figures are 2 454
-and 3 248, and the gaps are what the argument rests on.
+and 3 252, and the gaps are what the argument rests on.
 
 The generic is 24 bytes *smaller* at one width, which is codegen noise;
 the point is that there is no monomorphisation penalty to pay unless the
@@ -254,6 +266,11 @@ over a probe that locates the field and converts nothing:
 | ARM32 (Cortex-M4F) | +380 | +380 | +372 | +484 | +18 123 |
 | MSP430 (16-bit) | +352 | +370 | +372 | +776 | +28 409 |
 | AVR (8-bit) | +725 | +859 | +853 | +1 139 | +28 044 |
+
+Measured when `avr-none` and `msp430-none-elf` were installed; neither
+target is on this machine now, so these rows keep their original
+provenance — re-measuring them needs `rustup target add` for both plus
+nightly `rust-src` for `-Z build-std`.
 
 Three things fall out:
 
@@ -292,6 +309,8 @@ Three ways out, measured:
 | drop the value | 39 100 | `floating point number` |
 | **format it with `zmij`** | **43 468** | `floating point \`1.5\`` |
 
+All three at the commit that chose `zmij`; the typed row is 44 422 today.
+
 `zmij` is already a non-optional dependency — `write` needs it — it is
 `no_std`, it formats into a stack buffer, and `serde_json` 1.0.151 uses
 it for the same job, so the digits are identical. Keeping the text costs
@@ -311,9 +330,9 @@ it; being explicit does not need that to hold.
 
 ### What is left, and why
 
-`dacode-json` typed is 43 KB against `serde_json`'s 30 KB. By attributed
-library code `dacode-json` is the *smaller* of the two — 14 621 bytes against
-16 485 — so the gap is `core`, and it is the float parser again:
+`dacode-json` typed is 44 KB against `serde_json`'s 31 KB. By attributed
+library code `dacode-json` is the *smaller* of the two — 14 058 bytes against
+15 658 — so the gap is `core`, and it is the float parser again:
 `serde_json` ships its own and never instantiates `core::dec2flt`.
 
 That one is a deliberate trade, not an oversight.
@@ -328,7 +347,7 @@ The prediction recorded before measuring was "yyjson is famously
 compact". On this target it is not: 69 KB at `-Oz`, more than twice the
 `serde_json` binary and 2.8× the `pull` one.
 
-The reason is visible in one symbol. `yyjson_read_opts` is **47 184
+The reason is visible in one symbol. `yyjson_read_opts` is **39 044
 bytes** — a single function. yyjson marks its internals
 `static_inline` (`__attribute__((always_inline))`), so `-Oz` does not get
 a say, and the entire reader collapses into one enormous inlined state
@@ -376,7 +395,7 @@ support at all.
   everywhere and change no ordering.
 * **`dacode_json::pull` and yyjson do not do the same amount of work.**
   yyjson builds a full random-access DOM; `pull` streams and extracts.
-  The comparable row for yyjson is `dacode-json` typed (43 KB against
+  The comparable row for yyjson is `dacode-json` typed (44 KB against
   69 KB), and even that is not exact — yyjson leaves you a document you
   can query again.
 * **Only `.text` and `.rodata`.** `.bss` is dominated by the 64 KB bump
@@ -396,7 +415,7 @@ support at all.
 ## Follow-ups this measurement argues for
 
 * **`serde_json` avoids `core::dec2flt` by shipping its own float
-  parser.** The 13 KB is the price of a correctly-rounded one. A
+  parser.** The 14 KB is the price of a correctly-rounded one. A
   `pull`-shaped float accessor that reads a fixed-point value without
   ever building an `f64` would suit the sensor case, which mostly wants
   two decimal places rather than 17 significant figures.
