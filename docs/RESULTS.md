@@ -470,10 +470,10 @@ coming back as `1e19`; the streaming parser keeps it as an exact `u64`, as
 `dacode_json::from_slice` now uses this path. `Parser`/`Doc` still build a pool,
 which is the right structure for querying rather than converting.
 
-### Removing Stage 1 as well: `src/direct.rs`
+### Removing Stage 1 as well: `src/direct/mod.rs`
 
 If the index is what keeps the streaming path behind, removing it should
-close the gap. `src/direct.rs` is the same deserializer with the same
+close the gap. `src/direct/mod.rs` is the same deserializer with the same
 scalar decoding — shared functions, so the two cannot drift — and one byte
 cursor instead of a structural index.
 
@@ -495,6 +495,18 @@ broadcast('"')` gives a zero byte at each quote, and
 **It beats `serde_json` on the owned and borrowing paths** — +3.6% and
 +9.6% — and is 4.9% behind on partial deserialization, where `serde_json`'s
 skip is still better than ours.
+
+> **2026-10-10, no longer true.** The ignored-field skip now walks the
+> value directly (`src/direct/skip.rs`) instead of riding serde's
+> `MapAccess`/`SeqAccess` machinery, and validates skipped numbers in one
+> pass instead of `scalar_end` + `number_syntax`. Re-measured on this
+> machine — the 499/496 starting points are this run's own baselines,
+> not the table's recorded 503/529, which were measured on another day —
+> `struct_de_partial/dacode_json_direct/4mb` moved 499 → 636
+> MiB/s against `serde_json`'s 496 → 527: parity to +21%. The capture
+> bench's ignored row tells the same story (393 → 468 MiB/s at 853 KB,
+> ~9% behind `serde_json`'s skip, down from 26%) — see
+> `benches/rawjson.rs`'s docs for the decomposition and the residual.
 
 Memory, deserializing 10.44 MiB into 106 998 records:
 

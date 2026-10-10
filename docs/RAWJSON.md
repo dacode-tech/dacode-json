@@ -92,7 +92,7 @@ by each. This is inherent to their representations, not an oversight:
 
 | deserializer | entry points | capture | why |
 |---|---|---|---|
-| **positional** (`direct.rs`) | `from_str`, `from_slice`, `from_reader`, `Parser::deserialize` | **byte-exact** | it walks the input by byte offset; record `start`, skip one validated value (`IgnoredAny`), slice `input[start..pos]`, hand the span to the visitor through the crate-private trusted channel |
+| **positional** (`direct/mod.rs`) | `from_str`, `from_slice`, `from_reader`, `Parser::deserialize` | **byte-exact** | it walks the input by byte offset; record `start`, skip one validated value (`IgnoredAny`), slice `input[start..pos]`, hand the span to the visitor through the crate-private trusted channel |
 | **pool** (`de.rs`) | `de::from_doc`, `de::from_slice` | **canonical** (`to_json`) | the node pool stores object/array nodes as *(first-child-index, count)*, **not** a byte span — the source range is not retained, so it re-serializes |
 | **stream** (`stream/deserializer.rs`) | `stream::from_slice_with` | **error** | not wired; a `RawJson` field is a clean `invalid_type` error, never corruption |
 

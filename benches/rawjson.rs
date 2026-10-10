@@ -145,7 +145,7 @@ struct Reencoded<'a> {
 }
 
 /// Capture: walk the span to find its end — validating as it goes — then
-/// convert and copy it out (`src/direct.rs` -> `src/raw.rs`). The walk's
+/// convert and copy it out (`src/direct/skip.rs` -> `src/raw.rs`). The walk's
 /// validation is what lets the copy trust the bytes: the span goes to the
 /// visitor through the crate-private trusted channel
 /// (`raw::TrustedStr` -> `visit_newtype_struct`) and is wrapped without a
@@ -364,7 +364,7 @@ fn check_fidelity(name: &str, raw: &RawJson, dom: &serde_json::Value, wire: &str
     }
 
     // Capture the wire, splice it back out: a fixed point, byte-exact. This is
-    // the positional deserializer's path (`src/direct.rs`), the one callers get
+    // the positional deserializer's path (`src/direct/mod.rs`), the one callers get
     // from `from_str`/`from_slice`.
     let captured: Captured = dacode_json::from_str(wire).expect("wire parses");
     assert_eq!(
@@ -506,17 +506,32 @@ fn bench_splice_serialize(c: &mut Criterion) {
 ///
 /// `dacode_json_raw` over `dacode_json_ignored` is the price of keeping the
 /// payload, and since the redundant second validation was removed it is close
-/// to the intrinsic price. At 853 KB the delta is ~50 µs on a ~2.1 ms floor
-/// (2.3%, `tools/isolate.sh`), and it decomposes as:
+/// to the intrinsic price. At 853 KB the delta is ~36 µs on a ~1.8 ms floor
+/// (2.0%, `tools/isolate.sh`), and it decomposes as:
 ///
-/// * ~35 µs — the `&[u8]`→`&str` conversion. Unavoidable without `unsafe`:
+/// * ~30 µs — the `&[u8]`→`&str` conversion. Unavoidable without `unsafe`:
 ///   the span is bytes, `RawJson` holds a `str`, and `core::str::from_utf8`
 ///   is the only safe bridge. The walk already proved the span is UTF-8 —
 ///   every string in it was validated, every other byte in it is ASCII — so
 ///   the check inside the conversion is redundant, but it cannot be
 ///   separated from the conversion itself.
-/// * ~14 µs — the memcpy into the owned `Box<str>`. Inherent to keeping the
-///   bytes, and 0.7% of the floor.
+/// * ~6 µs — the memcpy into the owned `Box<str>`. Inherent to keeping the
+///   bytes, and 0.3% of the floor. The split is by sampling the capture
+///   loop; the delta is the measured ground truth.
+///
+/// The `dacode_json_ignored` floor is itself recent work, and the reason
+/// `src/direct/skip.rs` exists. It sat 26% behind `serde_json_ignored`
+/// (417 vs 530 MiB/s at 853 KB, the measurement that motivated the
+/// change; 393 vs 519 re-measured on the machine behind the numbers
+/// here) for two reasons: ignored containers rode serde's full
+/// `MapAccess`/`SeqAccess` machinery, and — the larger share once that
+/// was removed — every skipped number was scanned twice, once by
+/// `scalar_end` and once by `number_syntax`. The dedicated walk removed
+/// both and lands ~9% behind `serde_json_ignored` (468 vs 513 MiB/s
+/// here). The residual is structural: the walk recurses per container
+/// and its `Result` returns through memory, where `serde_json`'s skip
+/// is one flat loop over an explicit frame stack; a sampling profile
+/// attributes the difference to exactly that spread over the walk.
 ///
 /// What was here before the fix: capture sat ~2.7× above the floor, because
 /// `RawJson::from_string` re-validated the span — a full `crate::validate`

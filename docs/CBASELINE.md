@@ -206,7 +206,7 @@ a process. Any benchmark comparing across an FFI boundary should isolate.
 ## Current standing, after the streaming rewrite
 
 The tables above measure the pool parser, which is no longer what
-`dacode_json::from_slice` uses. Re-measured with `src/direct.rs`:
+`dacode_json::from_slice` uses. Re-measured with `src/direct/mod.rs`:
 
 ### Sum one integer field across every record, 4 MiB
 

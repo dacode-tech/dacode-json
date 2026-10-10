@@ -39,7 +39,11 @@ use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, V
 
 use alloc::borrow::Cow;
 
-use crate::stream::{expect_lit, parse_number, validate_number, Error, Num};
+use crate::stream::{expect_lit, parse_number, Error, Num};
+
+mod skip;
+
+use skip::skip_value;
 
 type Result<T> = core::result::Result<T, Error>;
 
@@ -441,43 +445,15 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
     /// Validate, convert nothing. See the note in [`crate::stream`]: a
     /// skip that does not check would accept documents `serde_json`
     /// rejects whenever the fault is in an ignored field.
+    ///
+    /// Everything goes to [`skip::skip_value`], a direct walk of the same
+    /// grammar `deserialize_any` enforces: no serde dispatch, no accessor
+    /// machinery, and numbers validated in a single pass. That walk is
+    /// what closed most of the gap to `serde_json`'s field skip — the
+    /// measured before and after are in `benches/rawjson.rs`.
     fn deserialize_ignored_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        self.c.skip_ws();
-        let at = self.c.pos;
-        match self.c.peek() {
-            b'{' | b'[' => self.deserialize_any(visitor),
-            b'"' => {
-                let (raw, simple) = self.c.scan_string()?;
-                if !simple && crate::unescape::unescape_checked(raw).is_none() {
-                    return Err(err(at, "invalid escape or UTF-8 in string"));
-                }
-                visitor.visit_unit()
-            }
-            b't' => {
-                let e = self.c.scalar_end();
-                expect_lit(self.c.input, at, e, b"true")?;
-                self.c.pos = e;
-                visitor.visit_unit()
-            }
-            b'f' => {
-                let e = self.c.scalar_end();
-                expect_lit(self.c.input, at, e, b"false")?;
-                self.c.pos = e;
-                visitor.visit_unit()
-            }
-            b'n' => {
-                let e = self.c.scalar_end();
-                expect_lit(self.c.input, at, e, b"null")?;
-                self.c.pos = e;
-                visitor.visit_unit()
-            }
-            _ => {
-                let e = self.c.scalar_end();
-                validate_number(self.c.input, at, e)?;
-                self.c.pos = e;
-                visitor.visit_unit()
-            }
-        }
+        skip_value(self.c, self.depth)?;
+        visitor.visit_unit()
     }
 
     fn deserialize_unit_struct<V: Visitor<'de>>(
@@ -503,11 +479,12 @@ impl<'a, 'de> de::Deserializer<'de> for ValueDe<'a, 'de> {
         // depth at least as strictly as `crate::validate` does, so the span
         // goes to the visitor through the crate-private trusted channel
         // (`raw::TrustedStr` -> `visit_newtype_struct`) rather than being
-        // re-validated. The `from_utf8` below is only the `&[u8]`→`&str`
-        // conversion — every string in the span was UTF-8-validated by the
-        // walk and every other byte in it is ASCII, so its error branch is
-        // unreachable here. It stays because there is no safe unchecked
-        // conversion, and this path is `unsafe`-free.
+        // re-validated. That agreement is pinned differentially by
+        // `tests/ignored_skip.rs`. The `from_utf8` below is only the
+        // `&[u8]`→`&str` conversion — every string in the span was
+        // UTF-8-validated by the walk and every other byte in it is ASCII,
+        // so its error branch is unreachable here. It stays because there
+        // is no safe unchecked conversion, and this path is `unsafe`-free.
         #[cfg(feature = "raw_value")]
         if name == crate::raw::TOKEN {
             let ValueDe { c, depth } = self;
