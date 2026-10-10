@@ -157,8 +157,8 @@ without leaking it.
 
 ### Parsing many documents
 
-`from_str` allocates a parser per call. Reuse one and a steady-state parse
-allocates **nothing**:
+A fresh `Parser` allocates its buffers per call. Reuse one and a
+steady-state parse allocates **nothing**:
 
 ```rust
 let mut p = dacode_json::Parser::with_capacity(64 * 1024);
